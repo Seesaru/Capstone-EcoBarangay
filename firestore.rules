@@ -1,0 +1,219 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Function to check if user is an admin - improved with exists() check
+    function isAdmin() {
+      return request.auth != null && 
+             exists(/databases/$(database)/documents/barangay_admins/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/barangay_admins/$(request.auth.uid)).data.role == 'admin';
+    }
+    
+    // Function to check if admin belongs to specific barangay
+    function isAdminOfBarangay(barangay) {
+      return request.auth != null && 
+             exists(/databases/$(database)/documents/barangay_admins/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/barangay_admins/$(request.auth.uid)).data.role == 'admin' &&
+             get(/databases/$(database)/documents/barangay_admins/$(request.auth.uid)).data.barangay == barangay;
+    }
+    
+    // Function to check if user is a resident
+    function isResident() {
+      return request.auth != null && 
+             exists(/databases/$(database)/documents/resident/$(request.auth.uid));
+    }
+    
+    // Function to check if user is a collector
+    function isCollector() {
+      return request.auth != null && 
+             exists(/databases/$(database)/documents/collector/$(request.auth.uid));
+    }
+    
+    // Allow users to read and write to their own document in resident collection (singular)
+    match /resident/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+
+      // Allow collectors to read resident documents for verification
+      allow read: if isCollector();
+      
+      // Allow collectors to update points for residents
+      allow update: if isCollector() && 
+                    request.resource.data.diff(resource.data).affectedKeys().hasOnly(['points', 'lastScanTimestamp', 'totalScans']);
+
+      // Allow admins to read, update and delete resident documents in their barangay
+      allow read: if isAdmin();
+      allow list: if isAdmin();
+
+      // For more specific admin control by barangay
+      allow list: if request.auth != null && 
+                 exists(/databases/$(database)/documents/barangay_admins/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/barangay_admins/$(request.auth.uid)).data.role == 'admin';
+		}
+    
+    // Allow access to residents collection (plural)
+    match /residents/{residentId} {
+      // Allow users to read and write to their own document
+      allow read, write: if request.auth != null && request.auth.uid == residentId;
+
+      // Allow collectors to read resident documents for verification
+      allow read: if isCollector();
+      
+      // Allow collectors to update points for residents
+      allow update: if isCollector() && 
+                   request.resource.data.diff(resource.data).affectedKeys().hasOnly(['points', 'lastScanTimestamp', 'totalScans']);
+
+      // Allow admins to read, update and delete resident documents
+      allow read, write, list: if isAdmin();
+    }
+    
+    // Rules for scans collection
+    match /scans/{scanId} {
+      // Allow collectors to create scan records
+      allow create: if isCollector() && 
+                   request.resource.data.collectorId == request.auth.uid;
+      
+      // Allow collectors to read their own scan records
+      allow read, list: if isCollector() && 
+                       resource.data.collectorId == request.auth.uid;
+      
+      // Allow residents to read scan records related to them
+      allow read, list: if request.auth != null && 
+                       resource.data.residentId == request.auth.uid;
+      
+      // Allow admins to read all scan records
+      allow read, list, write: if isAdmin();
+    }
+    
+    // Allow users to read and write to their own document in barangay_admins collection
+    match /barangay_admins/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+      // Allow other admins to read admin documents
+      allow read: if isAdmin();
+    }
+    
+    // Allow read access to barangays collection for all authenticated users
+   	  match /barangays/{barangayId} {
+      // Allow all users (even unauthenticated) to read barangays
+      allow read: if true;
+      // Only allow admins or creators to write
+      allow write: if isAdmin() || 
+                    (request.auth != null && 
+                     request.resource.data.createdBy == request.auth.uid);
+    }
+    
+    // Add rules for announcements collection - updated for residents
+    match /announcements/{announcementId} {
+      // Allow all authenticated users to read announcements
+      allow read: if request.auth != null;
+      
+      // Only allow admins to create, update, or delete announcements
+      allow create, update, delete: if isAdmin();
+    }
+    
+    // Add rules for the reports collection
+    match /reports/{reportId} {
+      // Allow authenticated users to read all reports
+      allow read: if request.auth != null;
+      
+      // Allow users to create reports
+      allow create: if request.auth != null && 
+                    request.resource.data.author != null && 
+                    request.resource.data.date != null;
+      
+      // Allow users to update their own reports
+      allow update: if request.auth != null && 
+                    resource.data.author == request.auth.uid;
+                    
+      // Allow users to upvote reports (consider using a more robust system for production)
+      allow update: if request.auth != null && 
+                    request.resource.data.diff(resource.data).affectedKeys().hasOnly(['upvotes']);
+                    
+      // Allow admins to update any report
+      allow update: if isAdmin();
+      
+      // Only allow admins or the report creator to delete reports
+      allow delete: if isAdmin() || 
+                    (request.auth != null && 
+                     resource.data.author == request.auth.uid);
+    }
+    
+    // Consolidated rules for collector collection
+        match /collector/{collectorId} {
+      // For listing collectors (collection query)
+      allow list: if 
+        // Collector can read documents
+        (request.auth != null && request.auth.uid == collectorId) ||
+        // Admin can list all collectors
+        isAdmin();
+
+      // For reading specific collector documents
+      allow get: if 
+        // Collector can read their own document
+        (request.auth != null && request.auth.uid == collectorId) ||
+        // Admin can read collector documents
+        isAdmin();
+
+      // For creating collector documents
+      allow create: if
+        // Self-registration during account creation
+        (request.auth != null && request.auth.uid == collectorId) ||
+        // Admin creating collector in their barangay
+        (isAdmin() && request.resource.data.barangay == get(/databases/$(database)/documents/barangay_admins/$(request.auth.uid)).data.barangay);
+
+      // For updating collector documents
+      allow update: if
+        // Collector updating their own data
+        (request.auth != null && request.auth.uid == collectorId) ||
+        // Admin updating collector in their barangay
+        (isAdmin() && resource.data.barangay == get(/databases/$(database)/documents/barangay_admins/$(request.auth.uid)).data.barangay);
+
+      // For deleting collector documents
+      allow delete: if
+        // Only admin can delete collectors from their barangay
+        isAdmin() && resource.data.barangay == get(/databases/$(database)/documents/barangay_admins/$(request.auth.uid)).data.barangay;
+    }
+
+    match /schedule/{scheduleId} {
+      // Allow all authenticated users to read schedule documents
+      allow read: if request.auth != null;
+      
+      // Only allow admins to create, update, or delete schedule documents
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /reward_matrix/{matrixId} {
+      // Allow all authenticated users to read reward matrix documents
+      allow read: if request.auth != null;
+      
+      // Only allow admins to create, update, or delete reward matrix documents
+      allow create, update, delete: if isAdmin();
+    }
+    
+    match /resident_logs/{logId} {
+      // Allow anyone to create a log entry for failed logins (no auth required)
+      allow create: if request.resource.data.status == 'failed';
+      
+      // Allow any authenticated user to create logs - needed for successful logins
+      allow create: if request.auth != null;
+
+      // Allow residents to read their own logs
+      allow read: if isResident() && 
+                  resource.data.userId == request.auth.uid;
+
+      // Allow collectors to read logs for their barangay
+      allow read, create: if isCollector();
+      allow list: if isCollector() && 
+                 (request.query.where.barangay == get(/databases/$(database)/documents/collector/$(request.auth.uid)).data.barangay ||
+                  request.query.limit <= 50);
+      
+      allow update: if isCollector() && 
+                    request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt', 'collectorNotes']);
+
+      // Allow admins to read, create, update, and delete all logs
+      allow read, write: if isAdmin();
+
+      // For more specific admin control by barangay
+      allow list: if isAdminOfBarangay(resource.data.barangay) || 
+                 (isAdmin() && request.query.where.barangay == get(/databases/$(database)/documents/barangay_admins/$(request.auth.uid)).data.barangay);
+    }
+  }
+} 

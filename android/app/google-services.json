@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "894124992565",
+    "project_id": "capstone-ecobarangay",
+    "storage_bucket": "capstone-ecobarangay.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:894124992565:android:e7daee3b6e0064007ba97c",
+        "android_client_info": {
+          "package_name": "com.example.capstone_ecobarangay"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyABb0IVZklCGkDJY4yady5lgniuPrbbySs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
