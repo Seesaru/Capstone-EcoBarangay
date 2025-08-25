@@ -47,7 +47,14 @@ service cloud.firestore {
       allow list: if request.auth != null && 
                  exists(/databases/$(database)/documents/barangay_admins/$(request.auth.uid)) &&
              get(/databases/$(database)/documents/barangay_admins/$(request.auth.uid)).data.role == 'admin';
-		}
+    }
+    
+    // Allow residents to query resident collection for purok information (same barangay only)
+    match /resident/{userId} {
+      // Allow residents to list other residents in the same barangay for purok discovery
+      allow list: if isResident() && 
+                  request.query.where.barangay == get(/databases/$(database)/documents/resident/$(request.auth.uid)).data.barangay;
+    }
     
     // Allow access to residents collection (plural)
     match /residents/{residentId} {

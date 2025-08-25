@@ -15,6 +15,7 @@ import 'package:capstone_ecobarangay/screens/others/reusable_widgets.dart';
 import 'package:intl/intl.dart';
 import 'package:capstone_ecobarangay/screens/admin/features/reward_matrix.dart';
 import 'package:capstone_ecobarangay/screens/admin/user_logs_screen.dart';
+import 'package:capstone_ecobarangay/screens/admin/penalty_list.dart';
 
 class AdminDashboardScreen extends StatefulWidget {
   const AdminDashboardScreen({Key? key}) : super(key: key);
@@ -222,6 +223,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         return const AnalyticsScreen();
       case 10:
         return UserLogsScreen(adminBarangay: _adminBarangay);
+      case 11:
+        return PenaltyListScreen(adminBarangay: _adminBarangay);
       default:
         return const DashboardHomeScreen();
     }
@@ -413,6 +416,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                             Icons.analytics, 'Analytics', isExtended),
                         _buildNavItem(10, Icons.history_outlined, Icons.history,
                             'User Logs', isExtended),
+                        _buildNavItem(11, Icons.warning_amber_outlined,
+                            Icons.warning_amber, 'Penalty List', isExtended),
                       ],
                     ),
                   ),

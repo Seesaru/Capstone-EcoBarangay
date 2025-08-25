@@ -54,14 +54,8 @@ class _AddAnnouncementScreenState extends State<AddAnnouncementScreen> {
     'Other'
   ];
 
-  final List<String> _puroks = [
-    'General',
-    'Purok 1',
-    'Purok 2',
-    'Purok 3',
-    'Purok 4',
-    'Purok 5'
-  ];
+  // Dynamic puroks list - will be populated from resident collection
+  List<String> _puroks = ['General'];
 
   final List<String> _priorities = ['Low', 'Medium', 'High'];
 
@@ -83,6 +77,87 @@ class _AddAnnouncementScreenState extends State<AddAnnouncementScreen> {
     'Notice': Colors.teal,
     'Other': Colors.grey,
   };
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAvailablePuroks();
+  }
+
+  // Dynamically load all unique puroks from resident collection
+  Future<void> _loadAvailablePuroks() async {
+    try {
+      print('Loading available puroks for barangay: ${widget.adminBarangay}');
+      final QuerySnapshot snapshot = await _firestore
+          .collection('resident')
+          .where('barangay', isEqualTo: widget.adminBarangay)
+          .get();
+
+      // Extract all puroks and remove duplicates
+      final Set<String> puroks = {'General'}; // Always include General
+      for (var doc in snapshot.docs) {
+        final userData = doc.data() as Map<String, dynamic>;
+        final purok = userData['purok']?.toString();
+        if (purok != null && purok.isNotEmpty) {
+          puroks.add(purok);
+        }
+      }
+
+      // Sort puroks numerically if possible
+      final sortedPuroks = puroks.toList()
+        ..sort((a, b) {
+          // Try to parse as numbers for natural sorting
+          try {
+            // Extract numbers from the purok strings
+            int aNum = int.parse(a.replaceAll(RegExp(r'[^0-9]'), ''));
+            int bNum = int.parse(b.replaceAll(RegExp(r'[^0-9]'), ''));
+            return aNum.compareTo(bNum);
+          } catch (e) {
+            // Fall back to string comparison if not parseable
+            return a.compareTo(b);
+          }
+        });
+
+      setState(() {
+        _puroks = sortedPuroks;
+        // Ensure selected purok is valid
+        if (!_puroks.contains(_selectedPurok)) {
+          _selectedPurok = _puroks.isNotEmpty ? _puroks.first : 'General';
+        }
+      });
+
+      print('Available puroks loaded: $_puroks');
+      print('Selected purok: $_selectedPurok');
+      print(
+          'Formatted puroks: ${_puroks.map((purok) => _formatPurokDisplay(purok)).toList()}');
+      print('Total residents found: ${snapshot.docs.length}');
+
+      // If no puroks found, add some default ones for testing
+      if (_puroks.length <= 1) {
+        // Only General
+        print('No puroks found, adding default puroks for testing');
+        _puroks = ['General', '1', '2', '3'];
+        setState(() {
+          // Ensure selected purok is valid
+          if (!_puroks.contains(_selectedPurok)) {
+            _selectedPurok = _puroks.isNotEmpty ? _puroks.first : 'General';
+          }
+        });
+      }
+    } catch (e) {
+      print('Error loading puroks: $e');
+    }
+  }
+
+  // Helper function to format purok display
+  String _formatPurokDisplay(String purok) {
+    // If purok already starts with "Purok", return as is
+    if (purok.toLowerCase().startsWith('purok')) {
+      return purok;
+    }
+    // Otherwise, add "Purok" prefix
+    return 'Purok $purok';
+  }
 
   Future<void> _submitForm() async {
     if (_formKey.currentState!.validate()) {
@@ -349,12 +424,20 @@ class _AddAnnouncementScreenState extends State<AddAnnouncementScreen> {
                             Expanded(
                               child: CustomDropdownField(
                                 label: 'Target Area',
-                                value: _selectedPurok,
-                                items: _puroks,
+                                value: _formatPurokDisplay(_selectedPurok),
+                                items: _puroks
+                                    .map((purok) => _formatPurokDisplay(purok))
+                                    .toList(),
                                 onChanged: (value) {
                                   if (value != null) {
                                     setState(() {
-                                      _selectedPurok = value;
+                                      // Convert formatted value back to original purok value
+                                      String originalPurok = value;
+                                      if (value.startsWith('Purok ')) {
+                                        originalPurok = value.substring(
+                                            6); // Remove "Purok " prefix
+                                      }
+                                      _selectedPurok = originalPurok;
                                     });
                                   }
                                 },
@@ -565,7 +648,7 @@ class _AddAnnouncementScreenState extends State<AddAnnouncementScreen> {
                               ),
                             ),
                             child: Text(
-                              _selectedPurok,
+                              _formatPurokDisplay(_selectedPurok),
                               style: TextStyle(
                                 fontSize: 10,
                                 fontWeight: FontWeight.bold,

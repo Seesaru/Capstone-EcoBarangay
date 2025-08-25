@@ -36,15 +36,18 @@ class _AdminAnnouncements extends State<AdminAnnouncements> {
   String _searchQuery = '';
   String _selectedCategory = 'All';
 
-  // Date filter options
-  final List<String> _dateFilterOptions = [
+  // Time period filter (match Penalty List design)
+  String _selectedTimeFilter = 'This Week';
+  String? _selectedMonth; // e.g., 'Jul 2025'
+  final List<String> _timeFilters = [
     'This Week',
     'This Month',
-    'All Time'
+    'This Year',
+    'All Time',
+    'Select Month',
   ];
-  String _selectedDateFilter = 'This Week';
 
-  // Category data matching resident view
+  // Category data matching resident view - will be populated dynamically
   List<Map<String, dynamic>> _categoryData = [
     {
       'name': 'All',
@@ -60,31 +63,6 @@ class _AdminAnnouncements extends State<AdminAnnouncements> {
       'name': 'General',
       'icon': FontAwesomeIcons.bullhorn,
       'color': Colors.blue,
-    },
-    {
-      'name': 'Purok 1',
-      'icon': FontAwesomeIcons.users,
-      'color': Colors.amber,
-    },
-    {
-      'name': 'Purok 2',
-      'icon': FontAwesomeIcons.users,
-      'color': Colors.green,
-    },
-    {
-      'name': 'Purok 3',
-      'icon': FontAwesomeIcons.users,
-      'color': Colors.purple,
-    },
-    {
-      'name': 'Purok 4',
-      'icon': FontAwesomeIcons.users,
-      'color': Colors.teal,
-    },
-    {
-      'name': 'Purok 5',
-      'icon': FontAwesomeIcons.users,
-      'color': Colors.deepOrange,
     },
   ];
 
@@ -109,6 +87,9 @@ class _AdminAnnouncements extends State<AdminAnnouncements> {
 
   // Store announcements from Firestore
   List<Map<String, dynamic>> _announcements = [];
+
+  // Add a list to store available puroks dynamically
+  List<String> _availablePuroks = [];
 
   @override
   void initState() {
@@ -139,7 +120,8 @@ class _AdminAnnouncements extends State<AdminAnnouncements> {
           _adminBarangay = adminData['barangay'] ?? '';
           print('Admin barangay fetched: $_adminBarangay');
 
-          // Now fetch announcements for this barangay
+          // First load available puroks, then fetch announcements
+          await _loadAvailablePuroks();
           await _fetchAnnouncements();
         } else {
           print('Admin doc does not exist for uid: ${currentUser.uid}');
@@ -155,6 +137,67 @@ class _AdminAnnouncements extends State<AdminAnnouncements> {
     }
   }
 
+  // Dynamically load all unique puroks from resident collection
+  Future<void> _loadAvailablePuroks() async {
+    try {
+      print('Loading available puroks for barangay: $_adminBarangay');
+      final QuerySnapshot snapshot = await _firestore
+          .collection('resident')
+          .where('barangay', isEqualTo: _adminBarangay)
+          .get();
+
+      // Extract all puroks and remove duplicates
+      final Set<String> puroks = {};
+      for (var doc in snapshot.docs) {
+        final userData = doc.data() as Map<String, dynamic>;
+        final purok = userData['purok']?.toString();
+        if (purok != null && purok.isNotEmpty) {
+          puroks.add(purok);
+        }
+      }
+
+      // Sort puroks numerically if possible
+      final sortedPuroks = puroks.toList()
+        ..sort((a, b) {
+          // Try to parse as numbers for natural sorting
+          try {
+            // Extract numbers from the purok strings
+            int aNum = int.parse(a.replaceAll(RegExp(r'[^0-9]'), ''));
+            int bNum = int.parse(b.replaceAll(RegExp(r'[^0-9]'), ''));
+            return aNum.compareTo(bNum);
+          } catch (e) {
+            // Fall back to string comparison if not parseable
+            return a.compareTo(b);
+          }
+        });
+
+      setState(() {
+        _availablePuroks = sortedPuroks;
+      });
+
+      print('Available puroks loaded: $_availablePuroks');
+      print('Total residents found: ${snapshot.docs.length}');
+
+      // If no puroks found, add some default ones for testing
+      if (_availablePuroks.isEmpty) {
+        print('No puroks found, adding default puroks for testing');
+        _availablePuroks = ['1', '2', '3'];
+      }
+    } catch (e) {
+      print('Error loading puroks: $e');
+    }
+  }
+
+  // Helper function to format purok display
+  String _formatPurokDisplay(String purok) {
+    // If purok already starts with "Purok", return as is
+    if (purok.toLowerCase().startsWith('purok')) {
+      return purok;
+    }
+    // Otherwise, add "Purok" prefix
+    return 'Purok $purok';
+  }
+
   // Fetch announcements from Firestore
   Future<void> _fetchAnnouncements() async {
     try {
@@ -168,15 +211,11 @@ class _AdminAnnouncements extends State<AdminAnnouncements> {
       List<Map<String, dynamic>> fetchedAnnouncements = [];
       Set<String> availablePuroks = {'General', 'Urgent'}; // Default categories
 
-      // Add Purok 1-5 to ensure they're always in the filter
-      for (int i = 1; i <= 5; i++) {
-        availablePuroks.add('Purok $i');
-      }
-
       // Filter and sort in code instead of in the query
       for (var doc in querySnapshot.docs) {
         Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
-        print('Processing announcement: ${data['title']} for barangay: ${data['barangay']}');
+        print(
+            'Processing announcement: ${data['title']} for barangay: ${data['barangay']}');
 
         // Only include documents for this barangay
         if (data['barangay'] == _adminBarangay) {
@@ -195,11 +234,37 @@ class _AdminAnnouncements extends State<AdminAnnouncements> {
               _categoryColors[data['category']] ?? Colors.blue;
 
           if (data.containsKey('categoryIcon')) {
-            categoryIcon = IconData(
-              data['categoryIcon'],
-              fontFamily: 'FontAwesomeIcons',
-              fontPackage: 'font_awesome_flutter',
-            );
+            // Use a mapping approach instead of dynamic IconData creation
+            int iconCode = data['categoryIcon'];
+            switch (iconCode) {
+              case 0xf0ca: // thList
+                categoryIcon = FontAwesomeIcons.thList;
+                break;
+              case 0xf06a: // exclamationCircle
+                categoryIcon = FontAwesomeIcons.exclamationCircle;
+                break;
+              case 0xf0a1: // bullhorn
+                categoryIcon = FontAwesomeIcons.bullhorn;
+                break;
+              case 0xf1b8: // recycle
+                categoryIcon = FontAwesomeIcons.recycle;
+                break;
+              case 0xf073: // calendarAlt
+                categoryIcon = FontAwesomeIcons.calendarAlt;
+                break;
+              case 0xf071: // exclamationTriangle
+                categoryIcon = FontAwesomeIcons.exclamationTriangle;
+                break;
+              case 0xf05a: // infoCircle
+                categoryIcon = FontAwesomeIcons.infoCircle;
+                break;
+              case 0xf0c0: // users
+                categoryIcon = FontAwesomeIcons.users;
+                break;
+              default:
+                categoryIcon = FontAwesomeIcons.bullhorn;
+                break;
+            }
           }
 
           if (data.containsKey('categoryColor')) {
@@ -208,6 +273,7 @@ class _AdminAnnouncements extends State<AdminAnnouncements> {
 
           // Add purok to available puroks set
           final purok = data['purok'] ?? 'General';
+          print('Processing announcement purok: $purok');
           if (purok.toString().startsWith('Purok')) {
             availablePuroks.add(purok);
           }
@@ -233,7 +299,7 @@ class _AdminAnnouncements extends State<AdminAnnouncements> {
       fetchedAnnouncements.sort(
           (a, b) => (b['date'] as DateTime).compareTo(a['date'] as DateTime));
 
-      // Dynamically build category data based on available puroks
+      // Dynamically build category data based on available puroks from residents
       List<Map<String, dynamic>> categoryData = [
         {
           'name': 'All',
@@ -252,23 +318,7 @@ class _AdminAnnouncements extends State<AdminAnnouncements> {
         },
       ];
 
-      // Get sorted purok list (excluding 'General' and 'Urgent' which are already added)
-      List<String> sortedPuroks = availablePuroks
-          .where((p) => p != 'General' && p != 'Urgent')
-          .toList();
-
-      // Sort puroks numerically if possible
-      sortedPuroks.sort((a, b) {
-        try {
-          int aNum = int.parse(a.replaceAll(RegExp(r'[^0-9]'), ''));
-          int bNum = int.parse(b.replaceAll(RegExp(r'[^0-9]'), ''));
-          return aNum.compareTo(bNum);
-        } catch (e) {
-          return a.compareTo(b);
-        }
-      });
-
-      // Add purok categories
+      // Add purok categories from the dynamically loaded puroks
       int colorIndex = 0;
       List<Color> purokColors = [
         Colors.amber,
@@ -282,9 +332,9 @@ class _AdminAnnouncements extends State<AdminAnnouncements> {
         Colors.brown
       ];
 
-      for (String purok in sortedPuroks) {
+      for (String purok in _availablePuroks) {
         categoryData.add({
-          'name': purok,
+          'name': _formatPurokDisplay(purok),
           'icon': FontAwesomeIcons.users,
           'color': purokColors[colorIndex % purokColors.length],
         });
@@ -296,6 +346,9 @@ class _AdminAnnouncements extends State<AdminAnnouncements> {
         _categoryData = categoryData;
         _isLoading = false;
       });
+
+      print('Category data built: ${_categoryData.length} categories');
+      print('Categories: ${_categoryData.map((c) => c['name']).toList()}');
     } catch (e) {
       print('Error fetching announcements: ${e.toString()}');
       setState(() {
@@ -317,8 +370,9 @@ class _AdminAnnouncements extends State<AdminAnnouncements> {
         ),
       );
 
-      // Refresh announcements
-      _fetchAnnouncements();
+      // Refresh announcements and puroks
+      await _loadAvailablePuroks();
+      await _fetchAnnouncements();
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -330,21 +384,44 @@ class _AdminAnnouncements extends State<AdminAnnouncements> {
     }
   }
 
-  // Filter announcements by date based on selected date filter
+  // Filter announcements by date based on selected time filter
   bool _isInSelectedDateRange(DateTime date) {
     final DateTime now = DateTime.now();
     final DateTime today = DateTime(now.year, now.month, now.day);
 
-    switch (_selectedDateFilter) {
+    if (_selectedTimeFilter == 'Select Month' && _selectedMonth != null) {
+      try {
+        final DateTime parsed = DateFormat('MMM yyyy').parse(_selectedMonth!);
+        final DateTime start = DateTime(parsed.year, parsed.month, 1);
+        final DateTime end =
+            DateTime(parsed.year, parsed.month + 1, 0, 23, 59, 59);
+        return date.isAfter(start.subtract(const Duration(seconds: 1))) &&
+            date.isBefore(end.add(const Duration(seconds: 1)));
+      } catch (_) {
+        return true;
+      }
+    }
+
+    switch (_selectedTimeFilter) {
       case 'This Week':
-        // Start of the week (Sunday)
         final DateTime startOfWeek =
-            today.subtract(Duration(days: today.weekday % 7));
-        return date.isAfter(startOfWeek.subtract(const Duration(days: 1)));
+            today.subtract(Duration(days: today.weekday - 1));
+        final DateTime endOfWeek =
+            DateTime(today.year, today.month, today.day, 23, 59, 59);
+        return date.isAfter(startOfWeek.subtract(const Duration(seconds: 1))) &&
+            date.isBefore(endOfWeek.add(const Duration(seconds: 1)));
       case 'This Month':
-        // Start of the month
         final DateTime startOfMonth = DateTime(today.year, today.month, 1);
-        return date.isAfter(startOfMonth.subtract(const Duration(days: 1)));
+        final DateTime endOfMonth =
+            DateTime(today.year, today.month + 1, 0, 23, 59, 59);
+        return date
+                .isAfter(startOfMonth.subtract(const Duration(seconds: 1))) &&
+            date.isBefore(endOfMonth.add(const Duration(seconds: 1)));
+      case 'This Year':
+        final DateTime startOfYear = DateTime(today.year, 1, 1);
+        final DateTime endOfYear = DateTime(today.year, 12, 31, 23, 59, 59);
+        return date.isAfter(startOfYear.subtract(const Duration(seconds: 1))) &&
+            date.isBefore(endOfYear.add(const Duration(seconds: 1)));
       case 'All Time':
       default:
         return true;
@@ -381,9 +458,23 @@ class _AdminAnnouncements extends State<AdminAnnouncements> {
             .toList();
       } else if (_selectedCategory.startsWith('Purok')) {
         // Filter by Purok
-        filtered = filtered
-            .where((announcement) => announcement['purok'] == _selectedCategory)
-            .toList();
+        print('Filtering by purok: $_selectedCategory');
+        print(
+            'Available puroks in announcements: ${_announcements.map((a) => a['purok']).toSet()}');
+
+        // Extract the purok number from the selected category (e.g., "Purok 1" -> "1")
+        String purokNumber = _selectedCategory.replaceAll('Purok ', '');
+
+        filtered = filtered.where((announcement) {
+          String announcementPurok = announcement['purok'].toString();
+          // Check if the announcement purok matches the purok number
+          bool matches = announcementPurok == purokNumber ||
+              announcementPurok == _selectedCategory;
+          print(
+              'Announcement purok: $announcementPurok, purok number: $purokNumber, matches: $matches');
+          return matches;
+        }).toList();
+        print('Filtered announcements count: ${filtered.length}');
       } else {
         // Filter by category
         filtered = filtered
@@ -394,7 +485,7 @@ class _AdminAnnouncements extends State<AdminAnnouncements> {
     }
 
     // Apply date filter
-    if (_selectedDateFilter != 'All Time') {
+    if (_selectedTimeFilter != 'All Time') {
       filtered = filtered
           .where((announcement) =>
               _isInSelectedDateRange(announcement['date'] as DateTime))
@@ -440,54 +531,183 @@ class _AdminAnnouncements extends State<AdminAnnouncements> {
                 ),
                 Row(
                   children: [
-                    // Date filter dropdown
+                    // Time Period control (match Penalty List)
                     Container(
-                      height: 45,
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 12),
                       decoration: BoxDecoration(
-                        color: cardColor,
-                        borderRadius: BorderRadius.circular(8),
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(12),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.grey.shade300,
-                            blurRadius: 3,
-                            offset: const Offset(0, 1),
+                            color: Colors.grey.withOpacity(0.1),
+                            spreadRadius: 1,
+                            blurRadius: 4,
+                            offset: const Offset(0, 2),
                           ),
                         ],
                       ),
-                      child: DropdownButtonHideUnderline(
-                        child: DropdownButton<String>(
-                          value: _selectedDateFilter,
-                          icon: const Icon(Icons.arrow_drop_down),
-                          iconSize: 24,
-                          elevation: 16,
-                          style: TextStyle(color: textColor, fontSize: 14),
-                          onChanged: (String? newValue) {
-                            if (newValue != null) {
-                              setState(() {
-                                _selectedDateFilter = newValue;
-                              });
-                            }
-                          },
-                          items: _dateFilterOptions
-                              .map<DropdownMenuItem<String>>((String value) {
-                            return DropdownMenuItem<String>(
-                              value: value,
+                      child: Row(
+                        children: [
+                          const Icon(Icons.calendar_month,
+                              color: Color(0xFF4CAF50), size: 20),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Time Period',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.grey.shade800,
+                            ),
+                          ),
+                          const SizedBox(width: 24),
+                          DropdownButton<String>(
+                            value: _selectedTimeFilter,
+                            items: _timeFilters.map((String value) {
+                              return DropdownMenuItem<String>(
+                                value: value,
+                                child: Text(
+                                  value,
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w500,
+                                    color: Colors.grey.shade800,
+                                  ),
+                                ),
+                              );
+                            }).toList(),
+                            onChanged: (String? newValue) async {
+                              if (newValue == null) return;
+                              if (newValue == 'Select Month') {
+                                final now = DateTime.now();
+                                DateTime? picked = await showDialog<DateTime>(
+                                  context: context,
+                                  builder: (context) {
+                                    int selectedYear = now.year;
+                                    int selectedMonth = now.month;
+                                    return StatefulBuilder(
+                                      builder: (context, setStateDialog) {
+                                        return AlertDialog(
+                                          title: const Text('Select Month'),
+                                          content: SizedBox(
+                                            height: 120,
+                                            child: Column(
+                                              children: [
+                                                DropdownButton<int>(
+                                                  value: selectedMonth,
+                                                  items: List.generate(
+                                                          12, (i) => i + 1)
+                                                      .map((month) =>
+                                                          DropdownMenuItem(
+                                                            value: month,
+                                                            child: Text(DateFormat(
+                                                                    'MMMM')
+                                                                .format(DateTime(
+                                                                    0, month))),
+                                                          ))
+                                                      .toList(),
+                                                  onChanged: (int? month) {
+                                                    if (month != null) {
+                                                      setStateDialog(() {
+                                                        selectedMonth = month;
+                                                      });
+                                                    }
+                                                  },
+                                                ),
+                                                DropdownButton<int>(
+                                                  value: selectedYear,
+                                                  items: List.generate(
+                                                          10,
+                                                          (i) =>
+                                                              now.year - 5 + i)
+                                                      .map((year) =>
+                                                          DropdownMenuItem(
+                                                            value: year,
+                                                            child: Text(year
+                                                                .toString()),
+                                                          ))
+                                                      .toList(),
+                                                  onChanged: (int? year) {
+                                                    if (year != null) {
+                                                      setStateDialog(() {
+                                                        selectedYear = year;
+                                                      });
+                                                    }
+                                                  },
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                          actions: [
+                                            TextButton(
+                                              onPressed: () =>
+                                                  Navigator.of(context).pop(),
+                                              child: const Text('Cancel'),
+                                            ),
+                                            TextButton(
+                                              onPressed: () {
+                                                Navigator.of(context).pop(
+                                                    DateTime(selectedYear,
+                                                        selectedMonth));
+                                              },
+                                              child: const Text('OK'),
+                                            ),
+                                          ],
+                                        );
+                                      },
+                                    );
+                                  },
+                                );
+                                if (picked != null) {
+                                  setState(() {
+                                    _selectedTimeFilter = 'Select Month';
+                                    _selectedMonth =
+                                        DateFormat('MMM yyyy').format(picked);
+                                  });
+                                }
+                              } else {
+                                setState(() {
+                                  _selectedTimeFilter = newValue;
+                                  _selectedMonth = null;
+                                });
+                              }
+                            },
+                            underline: const SizedBox(),
+                            icon: const Icon(Icons.arrow_drop_down,
+                                color: Color(0xFF4CAF50)),
+                            dropdownColor: Colors.white,
+                            isDense: true,
+                          ),
+                          if (_selectedTimeFilter == 'Select Month' &&
+                              _selectedMonth != null) ...[
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 6),
+                              decoration: BoxDecoration(
+                                color:
+                                    const Color(0xFF4CAF50).withOpacity(0.15),
+                                borderRadius: BorderRadius.circular(16),
+                              ),
                               child: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  Icon(
-                                    Icons.calendar_today,
-                                    size: 16,
-                                    color: Colors.grey.shade600,
+                                  const Icon(Icons.calendar_month,
+                                      color: Color(0xFF4CAF50), size: 18),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    _selectedMonth!,
+                                    style: const TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w500,
+                                      color: Color(0xFF4CAF50),
+                                    ),
                                   ),
-                                  const SizedBox(width: 8),
-                                  Text(value),
                                 ],
                               ),
-                            );
-                          }).toList(),
-                        ),
+                            ),
+                          ],
+                        ],
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -538,37 +758,31 @@ class _AdminAnnouncements extends State<AdminAnnouncements> {
                       ),
                     ),
                     const SizedBox(width: 12),
-                    // Add button with reload functionality
-                    Row(
-                      children: [
-                        IconButton(
-                          icon: Icon(Icons.refresh),
-                          onPressed: _fetchAnnouncements,
-                          tooltip: 'Refresh announcements',
-                          color: Colors.grey.shade700,
-                        ),
-                        const SizedBox(width: 4),
-                        ElevatedButton.icon(
-                          onPressed: () {
-                            if (widget.onAddAnnouncementPressed != null) {
-                              widget.onAddAnnouncementPressed!();
-                            }
-                          },
-                          icon: const Icon(Icons.add),
-                          label: const Text('Add Announcement'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: accentColor,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 20,
-                              vertical: 12,
-                            ),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(8),
-                            ),
+                    // Add button
+                    Container(
+                      height:
+                          45, // Match the height of search bar and time period
+                      child: ElevatedButton.icon(
+                        onPressed: () {
+                          if (widget.onAddAnnouncementPressed != null) {
+                            widget.onAddAnnouncementPressed!();
+                          }
+                        },
+                        icon: const Icon(Icons.add, size: 20),
+                        label: const Text('Add'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: accentColor,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 12,
                           ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          elevation: 2,
                         ),
-                      ],
+                      ),
                     ),
                   ],
                 ),
@@ -660,32 +874,35 @@ class _AdminAnnouncements extends State<AdminAnnouncements> {
             // Announcements statistics
             Row(
               children: [
-                _buildStatCard(
+                _buildStatCardCompact(
                   title: 'Total Announcements',
                   value: _announcements.length.toString(),
                   icon: Icons.campaign,
                   color: Colors.blue,
                 ),
                 const SizedBox(width: 16),
-                _buildStatCard(
+                _buildStatCardCompact(
                   title: 'High Priority',
                   value: _announcements
                       .where((a) => a['priority'] == 'High')
                       .length
                       .toString(),
-                  icon: Icons.priority_high,
-                  color: Colors.red,
+                  icon: Icons.warning,
+                  color: Colors.orange,
                 ),
                 const SizedBox(width: 16),
-                _buildStatCard(
-                  title: 'This Week',
+                _buildStatCardCompact(
+                  title: _selectedTimeFilter == 'Select Month' &&
+                          _selectedMonth != null
+                      ? _selectedMonth!
+                      : _selectedTimeFilter,
                   value: _announcements
-                      .where((a) => a['date'].isAfter(
-                          DateTime.now().subtract(const Duration(days: 7))))
+                      .where(
+                          (a) => _isInSelectedDateRange(a['date'] as DateTime))
                       .length
                       .toString(),
                   icon: Icons.date_range,
-                  color: Colors.orange,
+                  color: Colors.green,
                 ),
               ],
             ),
@@ -1191,6 +1408,8 @@ class _AdminAnnouncements extends State<AdminAnnouncements> {
                 _selectedCategory = 'All';
                 _searchController.clear();
                 _searchQuery = '';
+                _selectedTimeFilter = 'This Week';
+                _selectedMonth = null;
               });
             },
             icon: const Icon(Icons.refresh, size: 16),
@@ -1209,7 +1428,8 @@ class _AdminAnnouncements extends State<AdminAnnouncements> {
     );
   }
 
-  Widget _buildStatCard({
+  // Compact stat card matching Penalty List design
+  Widget _buildStatCardCompact({
     required String title,
     required String value,
     required IconData icon,
@@ -1217,39 +1437,27 @@ class _AdminAnnouncements extends State<AdminAnnouncements> {
   }) {
     return Expanded(
       child: Container(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: cardColor,
-          borderRadius: BorderRadius.circular(12),
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
           boxShadow: [
             BoxShadow(
               color: Colors.grey.shade300,
-              blurRadius: 6,
-              offset: const Offset(0, 3),
+              blurRadius: 5,
+              offset: const Offset(0, 2),
             ),
           ],
-          border: Border.all(
-            color: color.withOpacity(0.2),
-            width: 1,
-          ),
         ),
         child: Row(
           children: [
             Container(
-              padding: const EdgeInsets.all(14),
+              padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
                 color: color.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(
-                  color: color.withOpacity(0.3),
-                  width: 1.5,
-                ),
+                borderRadius: BorderRadius.circular(8),
               ),
-              child: Icon(
-                icon,
-                color: color,
-                size: 28,
-              ),
+              child: Icon(icon, color: color, size: 24),
             ),
             const SizedBox(width: 16),
             Column(
@@ -1258,22 +1466,20 @@ class _AdminAnnouncements extends State<AdminAnnouncements> {
                 Text(
                   value,
                   style: TextStyle(
-                    fontSize: 28,
+                    fontSize: 24,
                     fontWeight: FontWeight.bold,
-                    color: textColor,
+                    color: Colors.grey.shade800,
                   ),
                 ),
-                const SizedBox(height: 4),
                 Text(
                   title,
                   style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w500,
+                    fontSize: 14,
                     color: Colors.grey.shade600,
                   ),
                 ),
               ],
-            ),
+            )
           ],
         ),
       ),

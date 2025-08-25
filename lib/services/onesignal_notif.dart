@@ -187,4 +187,122 @@ class NotifServices {
       print("Exception sending broadcast notification: $e");
     }
   }
+
+  // NEW: Send scheduled notification to specific barangay
+  static Future<void> sendScheduledBarangayNotification({
+    required String barangay,
+    required String heading,
+    required String content,
+    required DateTime scheduledTime,
+    required String scheduleId,
+    String? bigPicture,
+  }) async {
+    print(
+        "Scheduling notification for barangay: $barangay at ${scheduledTime.toIso8601String()}");
+
+    final Map<String, dynamic> notificationData = {
+      "app_id": _appId,
+      "filters": [
+        {
+          "field": "tag",
+          "key": "barangay",
+          "relation": "=",
+          "value": barangay,
+        }
+      ],
+      "headings": {"en": heading},
+      "contents": {"en": content},
+      "send_after":
+          scheduledTime.toIso8601String(), // Schedule the notification
+      "data": {
+        "schedule_id": scheduleId,
+        "barangay": barangay,
+        "type": "scheduled_collection",
+      },
+    };
+
+    if (bigPicture != null) {
+      notificationData["big_picture"] = bigPicture;
+    }
+
+    try {
+      print("Sending scheduled notification request to OneSignal API...");
+      print("Notification data: ${jsonEncode(notificationData)}");
+
+      final response = await http.post(
+        Uri.parse(_onesignalUrl),
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+          "Authorization": _authKey,
+        },
+        body: jsonEncode(notificationData),
+      );
+
+      if (response.statusCode == 200) {
+        final responseData = jsonDecode(response.body);
+        print("Scheduled notification created successfully!");
+        print("Notification ID: ${responseData['id']}");
+        print("Scheduled for: ${responseData['send_after']}");
+      } else {
+        print(
+            "Failed to schedule notification: ${response.statusCode} - ${response.body}");
+      }
+    } catch (e) {
+      print("Exception scheduling notification: $e");
+    }
+  }
+
+  // NEW: Send immediate notification with custom data for better handling
+  static Future<void> sendBarangayNotificationWithData({
+    required String barangay,
+    required String heading,
+    required String content,
+    Map<String, dynamic>? additionalData,
+    String? bigPicture,
+  }) async {
+    print("Sending notification with data to barangay: $barangay");
+
+    final Map<String, dynamic> notificationData = {
+      "app_id": _appId,
+      "filters": [
+        {
+          "field": "tag",
+          "key": "barangay",
+          "relation": "=",
+          "value": barangay,
+        }
+      ],
+      "headings": {"en": heading},
+      "contents": {"en": content},
+      "data": additionalData ?? {},
+    };
+
+    if (bigPicture != null) {
+      notificationData["big_picture"] = bigPicture;
+    }
+
+    try {
+      print("Sending request to OneSignal API...");
+      print("Notification data: ${jsonEncode(notificationData)}");
+
+      final response = await http.post(
+        Uri.parse(_onesignalUrl),
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+          "Authorization": _authKey,
+        },
+        body: jsonEncode(notificationData),
+      );
+
+      if (response.statusCode == 200) {
+        print(
+            "Notification with data sent successfully to $barangay: ${response.body}");
+      } else {
+        print(
+            "Failed to send notification with data: ${response.statusCode} - ${response.body}");
+      }
+    } catch (e) {
+      print("Exception sending notification with data: $e");
+    }
+  }
 }

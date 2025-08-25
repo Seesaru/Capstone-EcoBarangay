@@ -411,7 +411,8 @@ class _CollectorScanScreenState extends State<CollectorScanScreen>
     }
 
     // Check if any warning or penalty is checked
-    bool hasWarningsOrPenalties = _hasFailedToContribute || _hasNotSegregated || _hasNoContributions;
+    bool hasWarningsOrPenalties =
+        _hasFailedToContribute || _hasNotSegregated || _hasNoContributions;
 
     // Validate weight input only if no warnings or penalties are checked
     if (!hasWarningsOrPenalties) {
@@ -478,6 +479,10 @@ class _CollectorScanScreenState extends State<CollectorScanScreen>
         final newTotalPoints = result['newTotalPoints'] ?? pointsAwarded;
         final pointsFormula = result['pointsCalculation']?['formula'] ?? '';
 
+        // Check if any warnings or penalties were applied
+        bool hasWarningsOrPenalties =
+            _hasFailedToContribute || _hasNotSegregated || _hasNoContributions;
+
         setState(() {
           _scanResult = 'Scan submitted successfully!';
           _pointsAwarded =
@@ -485,165 +490,14 @@ class _CollectorScanScreenState extends State<CollectorScanScreen>
           _isSubmitting = false;
         });
 
-        // Show success dialog
-        showDialog(
-          context: context,
-          barrierDismissible: false,
-          builder: (context) => AlertDialog(
-            title: Row(
-              children: [
-                Icon(Icons.check_circle, color: Colors.green, size: 24),
-                SizedBox(width: 8),
-                Text('Success!'),
-              ],
-            ),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Scan submitted successfully'),
-                SizedBox(height: 8),
-                Text('Resident: $_userName'),
-                Row(
-                  children: [
-                    Icon(
-                      getWasteTypeIcon(_selectedGarbageType),
-                      size: 14,
-                      color: getWasteTypeColor(_selectedGarbageType),
-                    ),
-                    SizedBox(width: 4),
-                    Flexible(
-                      child: Text(
-                        'Garbage Type: $_selectedGarbageType',
-                        style: TextStyle(
-                          color: getWasteTypeColor(_selectedGarbageType),
-                          fontWeight: FontWeight.w500,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
-                ),
-                Text('Weight: $weight kg'),
-                SizedBox(height: 12),
-
-                // Points breakdown section
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.amber.shade50,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: Colors.amber.shade200,
-                      width: 1,
-                    ),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          const Icon(
-                            Icons.emoji_events,
-                            color: Colors.amber,
-                            size: 18,
-                          ),
-                          const SizedBox(width: 8),
-                          const Text(
-                            'Points Awarded',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text('Previous Points:'),
-                          Text(
-                            '${result['previousPoints']}',
-                            style: TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                        ],
-                      ),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text('Points Earned:'),
-                          Text(
-                            '+${result['pointsAwarded']}',
-                            style: TextStyle(
-                              color: Colors.green,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                      Divider(),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text('New Total:'),
-                          Text(
-                            '${result['newTotalPoints']}',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                      if (result['pointsCalculation'] != null &&
-                          result['pointsCalculation']['fromRewardMatrix'] !=
-                              null) ...[
-                        SizedBox(height: 8),
-                        Text(
-                          'Points calculated using ${result['pointsCalculation']['collectorBarangay']} reward matrix',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontStyle: FontStyle.italic,
-                            color: Colors.black54,
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            actions: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Color.fromARGB(255, 3, 144, 123),
-                      foregroundColor: Colors.white,
-                    ),
-                    onPressed: () {
-                      Navigator.pop(context);
-                      Navigator.pushReplacementNamed(
-                          context, '/collector/scan-history');
-                    },
-                    child: Text('View History'),
-                  ),
-                  TextButton(
-                    onPressed: () {
-                      Navigator.pop(context);
-                    },
-                    child: Text('Close'),
-                    style: TextButton.styleFrom(
-                      foregroundColor: Colors.grey.shade700,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        );
+        // Show different dialog based on whether warnings/penalties were applied
+        if (hasWarningsOrPenalties) {
+          // Show warning/penalty dialog
+          _showWarningPenaltyDialog(result);
+        } else {
+          // Show regular success dialog
+          _showSuccessDialog(result, weight);
+        }
       } else if (result['alreadyScanned'] == true) {
         // Show duplicate scan error but without setting error details
         setState(() {
@@ -787,6 +641,450 @@ class _CollectorScanScreenState extends State<CollectorScanScreen>
         _isSubmitting = false;
       });
     }
+  }
+
+  // Show success dialog for regular scans (no warnings/penalties)
+  void _showSuccessDialog(Map<String, dynamic> result, double weight) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.check_circle, color: Colors.green, size: 24),
+            SizedBox(width: 8),
+            Text('Success!'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Scan submitted'),
+            SizedBox(height: 8),
+            Text('Resident: $_userName'),
+            Row(
+              children: [
+                Icon(
+                  getWasteTypeIcon(_selectedGarbageType),
+                  size: 14,
+                  color: getWasteTypeColor(_selectedGarbageType),
+                ),
+                SizedBox(width: 4),
+                Flexible(
+                  child: Text(
+                    'Type: $_selectedGarbageType',
+                    style: TextStyle(
+                      color: getWasteTypeColor(_selectedGarbageType),
+                      fontWeight: FontWeight.w500,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+            Text('Weight: $weight kg'),
+            SizedBox(height: 12),
+
+            // Points breakdown section
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.amber.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: Colors.amber.shade200,
+                  width: 1,
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.emoji_events,
+                        color: Colors.amber,
+                        size: 18,
+                      ),
+                      const SizedBox(width: 8),
+                      const Text(
+                        'Points',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('Previous:'),
+                      Text(
+                        '${result['previousPoints']}',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('Earned:'),
+                      Text(
+                        '+${result['pointsAwarded']}',
+                        style: TextStyle(
+                          color: Colors.green,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                  Divider(),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('Total:'),
+                      Text(
+                        '${result['newTotalPoints']}',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (result['pointsCalculation'] != null &&
+                      result['pointsCalculation']['fromRewardMatrix'] !=
+                          null) ...[
+                    SizedBox(height: 8),
+                    Text(
+                      'Using ${result['pointsCalculation']['collectorBarangay']} matrix',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontStyle: FontStyle.italic,
+                        color: Colors.black54,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Color.fromARGB(255, 3, 144, 123),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                onPressed: () {
+                  Navigator.pop(context);
+                  Navigator.pushReplacementNamed(
+                      context, '/collector/scan-history');
+                },
+                child: Text('View History'),
+              ),
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                },
+                child: Text('Close'),
+                style: TextButton.styleFrom(
+                  foregroundColor: Colors.grey.shade700,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Show warning/penalty dialog
+  void _showWarningPenaltyDialog(Map<String, dynamic> result) {
+    // Build list of applied warnings and penalties
+    List<String> appliedWarnings = [];
+    List<String> appliedPenalties = [];
+
+    if (_hasFailedToContribute) {
+      appliedWarnings.add('Failed to Contribute');
+    }
+    if (_hasNotSegregated) {
+      appliedPenalties.add('Not Segregated');
+    }
+    if (_hasNoContributions) {
+      appliedPenalties.add('No Contributions');
+    }
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 24),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Warning/Penalty Applied',
+                style: TextStyle(fontSize: 18),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Resident: $_userName',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+            ),
+            SizedBox(height: 4),
+            Row(
+              children: [
+                Icon(
+                  getWasteTypeIcon(_selectedGarbageType),
+                  size: 14,
+                  color: getWasteTypeColor(_selectedGarbageType),
+                ),
+                SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    'Type: $_selectedGarbageType',
+                    style: TextStyle(
+                      color: getWasteTypeColor(_selectedGarbageType),
+                      fontWeight: FontWeight.w500,
+                      fontSize: 14,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+            SizedBox(height: 12),
+
+            // Compact warnings/penalties display
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.red.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: Colors.red.shade200,
+                  width: 1,
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Applied warnings/penalties summary
+                  Row(
+                    children: [
+                      Icon(Icons.warning_amber_rounded,
+                          color: Colors.orange, size: 16),
+                      SizedBox(width: 6),
+                      Text(
+                        'Applied:',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.red.shade800,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
+                  ),
+                  SizedBox(height: 6),
+
+                  // Show applied items in a compact list
+                  if (appliedWarnings.isNotEmpty) ...[
+                    ...appliedWarnings.map((warning) => Padding(
+                          padding: EdgeInsets.only(left: 22, top: 2),
+                          child: Row(
+                            children: [
+                              Icon(Icons.warning,
+                                  size: 12, color: Colors.orange),
+                              SizedBox(width: 6),
+                              Text(
+                                warning,
+                                style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.orange.shade700),
+                              ),
+                            ],
+                          ),
+                        )),
+                  ],
+
+                  if (appliedPenalties.isNotEmpty) ...[
+                    ...appliedPenalties.map((penalty) => Padding(
+                          padding: EdgeInsets.only(left: 22, top: 2),
+                          child: Row(
+                            children: [
+                              Icon(Icons.block, size: 12, color: Colors.red),
+                              SizedBox(width: 6),
+                              Text(
+                                penalty,
+                                style: TextStyle(
+                                    fontSize: 12, color: Colors.red.shade700),
+                              ),
+                            ],
+                          ),
+                        )),
+                  ],
+
+                  Divider(height: 12),
+
+                  // Compact totals display
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Total Warnings:',
+                        style: TextStyle(
+                            fontSize: 13, fontWeight: FontWeight.w600),
+                      ),
+                      Text(
+                        '${result['newTotalWarnings']}',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.orange.shade700,
+                        ),
+                      ),
+                    ],
+                  ),
+                  SizedBox(height: 4),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Total Penalties:',
+                        style: TextStyle(
+                            fontSize: 13, fontWeight: FontWeight.w600),
+                      ),
+                      Text(
+                        '${result['newTotalPenalties']}',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.red.shade700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+
+            SizedBox(height: 8),
+
+            // Compact info note
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: Colors.grey.shade300),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.info_outline,
+                      size: 14, color: Colors.grey.shade600),
+                  SizedBox(width: 6),
+                  Text(
+                    'No points awarded',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.grey.shade700,
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Color.fromARGB(255, 3, 144, 123),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                onPressed: () {
+                  Navigator.pop(context);
+                  Navigator.pushReplacementNamed(
+                      context, '/collector/scan-history');
+                },
+                child: Text('View History'),
+              ),
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                },
+                child: Text('Close'),
+                style: TextButton.styleFrom(
+                  foregroundColor: Colors.grey.shade700,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Helper method to build count rows more compactly
+  Widget _buildCountRow(String label, String value, bool isBold,
+      [Color? color, double? fontSize]) {
+    return Padding(
+      padding: EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: fontSize ?? 13,
+                fontWeight: isBold ? FontWeight.w600 : FontWeight.normal,
+              ),
+            ),
+          ),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: fontSize ?? 13,
+              fontWeight: isBold ? FontWeight.bold : FontWeight.w500,
+              color: color,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   // Add this new method to handle QR code detection with stability check
@@ -1698,9 +1996,13 @@ class _CollectorScanScreenState extends State<CollectorScanScreen>
                           keyboardType: const TextInputType.numberWithOptions(
                               decimal: true),
                           style: const TextStyle(fontSize: 16),
-                          enabled: !_hasFailedToContribute && !_hasNotSegregated && !_hasNoContributions,
+                          enabled: !_hasFailedToContribute &&
+                              !_hasNotSegregated &&
+                              !_hasNoContributions,
                           decoration: InputDecoration(
-                            hintText: _hasFailedToContribute || _hasNotSegregated || _hasNoContributions 
+                            hintText: _hasFailedToContribute ||
+                                    _hasNotSegregated ||
+                                    _hasNoContributions
                                 ? 'Weight input disabled due to warnings/penalties'
                                 : 'Enter weight',
                             border: OutlineInputBorder(
@@ -1711,18 +2013,26 @@ class _CollectorScanScreenState extends State<CollectorScanScreen>
                               vertical: 14,
                             ),
                             suffixText: 'kg',
-                            helperText: _hasFailedToContribute || _hasNotSegregated || _hasNoContributions
+                            helperText: _hasFailedToContribute ||
+                                    _hasNotSegregated ||
+                                    _hasNoContributions
                                 ? 'Weight and points are not awarded when warnings or penalties are applied'
                                 : 'Weight determines points based on barangay reward matrix',
                             helperStyle: TextStyle(
                               fontSize: 12,
                               fontStyle: FontStyle.italic,
-                              color: _hasFailedToContribute || _hasNotSegregated || _hasNoContributions
+                              color: _hasFailedToContribute ||
+                                      _hasNotSegregated ||
+                                      _hasNoContributions
                                   ? Colors.red.shade600
                                   : Colors.grey.shade600,
                             ),
-                            filled: _hasFailedToContribute || _hasNotSegregated || _hasNoContributions,
-                            fillColor: _hasFailedToContribute || _hasNotSegregated || _hasNoContributions
+                            filled: _hasFailedToContribute ||
+                                _hasNotSegregated ||
+                                _hasNoContributions,
+                            fillColor: _hasFailedToContribute ||
+                                    _hasNotSegregated ||
+                                    _hasNoContributions
                                 ? Colors.grey.shade100
                                 : null,
                           ),

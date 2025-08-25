@@ -640,12 +640,15 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
     },
   ];
 
-  // Sort options
-  final List<String> _sortOptions = [
-    'Latest',
+  // Time period filter (match Announcement screen design)
+  String _selectedTimeFilter = 'This Week';
+  String? _selectedMonth; // e.g., 'Jul 2025'
+  final List<String> _timeFilters = [
     'This Week',
     'This Month',
-    'Oldest',
+    'This Year',
+    'All Time',
+    'Select Month',
   ];
 
   @override
@@ -690,6 +693,50 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
     }
   }
 
+  // Filter announcements by date based on selected time filter
+  bool _isInSelectedDateRange(DateTime date) {
+    final DateTime now = DateTime.now();
+    final DateTime today = DateTime(now.year, now.month, now.day);
+
+    if (_selectedTimeFilter == 'Select Month' && _selectedMonth != null) {
+      try {
+        final DateTime parsed = DateFormat('MMM yyyy').parse(_selectedMonth!);
+        final DateTime start = DateTime(parsed.year, parsed.month, 1);
+        final DateTime end =
+            DateTime(parsed.year, parsed.month + 1, 0, 23, 59, 59);
+        return date.isAfter(start.subtract(const Duration(seconds: 1))) &&
+            date.isBefore(end.add(const Duration(seconds: 1)));
+      } catch (_) {
+        return true;
+      }
+    }
+
+    switch (_selectedTimeFilter) {
+      case 'This Week':
+        final DateTime startOfWeek =
+            today.subtract(Duration(days: today.weekday - 1));
+        final DateTime endOfWeek =
+            DateTime(today.year, today.month, today.day, 23, 59, 59);
+        return date.isAfter(startOfWeek.subtract(const Duration(seconds: 1))) &&
+            date.isBefore(endOfWeek.add(const Duration(seconds: 1)));
+      case 'This Month':
+        final DateTime startOfMonth = DateTime(today.year, today.month, 1);
+        final DateTime endOfMonth =
+            DateTime(today.year, today.month + 1, 0, 23, 59, 59);
+        return date
+                .isAfter(startOfMonth.subtract(const Duration(seconds: 1))) &&
+            date.isBefore(endOfMonth.add(const Duration(seconds: 1)));
+      case 'This Year':
+        final DateTime startOfYear = DateTime(today.year, 1, 1);
+        final DateTime endOfYear = DateTime(today.year, 12, 31, 23, 59, 59);
+        return date.isAfter(startOfYear.subtract(const Duration(seconds: 1))) &&
+            date.isBefore(endOfYear.add(const Duration(seconds: 1)));
+      case 'All Time':
+      default:
+        return true;
+    }
+  }
+
   // Fetch reports from Firestore
   Future<void> _fetchReports() async {
     if (_adminBarangay.isEmpty) {
@@ -705,7 +752,7 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
       Query query = _firestore
           .collection('reports')
           .where('residentBarangay', isEqualTo: _adminBarangay)
-          .orderBy('date', descending: _selectedSortOption != 'Oldest');
+          .orderBy('date', descending: true);
 
       // Execute the query
       QuerySnapshot querySnapshot = await query.get();
@@ -738,12 +785,8 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
         }
 
         // Client-side date filtering
-        if (_selectedSortOption == 'This Week' &&
-            reportDate.isBefore(startOfWeek)) {
-          continue; // Skip if the report is from before this week
-        } else if (_selectedSortOption == 'This Month' &&
-            reportDate.isBefore(startOfMonth)) {
-          continue; // Skip if the report is from before this month
+        if (!_isInSelectedDateRange(reportDate)) {
+          continue; // Skip if the report is not in the selected date range
         }
 
         // Client-side text search filtering
@@ -860,6 +903,178 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
             ],
           ),
           const Spacer(),
+          // Time Period Filter
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.grey.withOpacity(0.1),
+                  spreadRadius: 1,
+                  blurRadius: 4,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.calendar_month,
+                    color: Color(0xFF4CAF50), size: 20),
+                const SizedBox(width: 8),
+                Text(
+                  'Time Period',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey.shade800,
+                  ),
+                ),
+                const SizedBox(width: 24),
+                DropdownButton<String>(
+                  value: _selectedTimeFilter,
+                  items: _timeFilters.map((String value) {
+                    return DropdownMenuItem<String>(
+                      value: value,
+                      child: Text(
+                        value,
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                          color: Colors.grey.shade800,
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                  onChanged: (String? newValue) async {
+                    if (newValue == null) return;
+                    if (newValue == 'Select Month') {
+                      final now = DateTime.now();
+                      DateTime? picked = await showDialog<DateTime>(
+                        context: context,
+                        builder: (context) {
+                          int selectedYear = now.year;
+                          int selectedMonth = now.month;
+                          return StatefulBuilder(
+                            builder: (context, setStateDialog) {
+                              return AlertDialog(
+                                title: const Text('Select Month'),
+                                content: SizedBox(
+                                  height: 120,
+                                  child: Column(
+                                    children: [
+                                      DropdownButton<int>(
+                                        value: selectedMonth,
+                                        items: List.generate(12, (i) => i + 1)
+                                            .map((month) => DropdownMenuItem(
+                                                  value: month,
+                                                  child: Text(DateFormat('MMMM')
+                                                      .format(
+                                                          DateTime(0, month))),
+                                                ))
+                                            .toList(),
+                                        onChanged: (int? month) {
+                                          if (month != null) {
+                                            setStateDialog(() {
+                                              selectedMonth = month;
+                                            });
+                                          }
+                                        },
+                                      ),
+                                      DropdownButton<int>(
+                                        value: selectedYear,
+                                        items: List.generate(
+                                                10, (i) => now.year - 5 + i)
+                                            .map((year) => DropdownMenuItem(
+                                                  value: year,
+                                                  child: Text(year.toString()),
+                                                ))
+                                            .toList(),
+                                        onChanged: (int? year) {
+                                          if (year != null) {
+                                            setStateDialog(() {
+                                              selectedYear = year;
+                                            });
+                                          }
+                                        },
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () =>
+                                        Navigator.of(context).pop(),
+                                    child: const Text('Cancel'),
+                                  ),
+                                  TextButton(
+                                    onPressed: () {
+                                      Navigator.of(context).pop(DateTime(
+                                          selectedYear, selectedMonth));
+                                    },
+                                    child: const Text('OK'),
+                                  ),
+                                ],
+                              );
+                            },
+                          );
+                        },
+                      );
+                      if (picked != null) {
+                        setState(() {
+                          _selectedTimeFilter = 'Select Month';
+                          _selectedMonth =
+                              DateFormat('MMM yyyy').format(picked);
+                        });
+                        _fetchReports();
+                      }
+                    } else {
+                      setState(() {
+                        _selectedTimeFilter = newValue;
+                        _selectedMonth = null;
+                      });
+                      _fetchReports();
+                    }
+                  },
+                  underline: const SizedBox(),
+                  icon: const Icon(Icons.arrow_drop_down,
+                      color: Color(0xFF4CAF50)),
+                  dropdownColor: Colors.white,
+                  isDense: true,
+                ),
+                if (_selectedTimeFilter == 'Select Month' &&
+                    _selectedMonth != null) ...[
+                  const SizedBox(width: 8),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF4CAF50).withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.calendar_month,
+                            color: Color(0xFF4CAF50), size: 18),
+                        const SizedBox(width: 6),
+                        Text(
+                          _selectedMonth!,
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                            color: Color(0xFF4CAF50),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
           // Search Bar
           Container(
             width: 300,
@@ -955,53 +1170,6 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
           ),
         ),
         const SizedBox(height: 12),
-
-        // Sorting Options (Without Container)
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24),
-          child: Row(
-            children: [
-              Text(
-                'Sort by:',
-                style: TextStyle(
-                  fontWeight: FontWeight.w500,
-                  color: Colors.grey.shade700,
-                ),
-              ),
-              const SizedBox(width: 12),
-              ...List.generate(
-                _sortOptions.length,
-                (index) => Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: ChoiceChip(
-                    label: Text(_sortOptions[index]),
-                    selected: _selectedSortOption == _sortOptions[index],
-                    onSelected: (selected) {
-                      if (selected) {
-                        setState(() {
-                          _selectedSortOption = _sortOptions[index];
-                          _isLoading = true;
-                        });
-                        _fetchReports();
-                      }
-                    },
-                    backgroundColor: Colors.grey.shade100,
-                    selectedColor: accentColor,
-                    labelStyle: TextStyle(
-                      color: _selectedSortOption == _sortOptions[index]
-                          ? Colors.white
-                          : Colors.black87,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 8),
-
-        // Active Filters Section
-        _buildActiveFilters(),
       ],
     );
   }
@@ -1056,112 +1224,6 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _buildActiveFilters() {
-    final List<Widget> filterChips = [];
-
-    // Add category filter
-    if (_selectedCategoryIndex > 0) {
-      filterChips.add(
-        Chip(
-          label: Text(
-            'Category: ${_categoryData[_selectedCategoryIndex]['name']}',
-            style: const TextStyle(fontSize: 12, color: Colors.white),
-          ),
-          backgroundColor:
-              _categoryData[_selectedCategoryIndex]['color'] as Color,
-          deleteIconColor: Colors.white,
-          onDeleted: () {
-            setState(() {
-              _selectedCategoryIndex = 0;
-              _isLoading = true;
-            });
-            _fetchReports();
-          },
-        ),
-      );
-    }
-
-    // Add sort filter
-    if (_selectedSortOption != 'Latest') {
-      filterChips.add(
-        Chip(
-          label: Text(
-            'Sort: $_selectedSortOption',
-            style: const TextStyle(fontSize: 12, color: Colors.white),
-          ),
-          backgroundColor: accentColor,
-          deleteIconColor: Colors.white,
-          onDeleted: () {
-            setState(() {
-              _selectedSortOption = 'Latest';
-              _isLoading = true;
-            });
-            _fetchReports();
-          },
-        ),
-      );
-    }
-
-    // Add search filter
-    if (_searchQuery.isNotEmpty) {
-      filterChips.add(
-        Chip(
-          label: Text(
-            'Search: $_searchQuery',
-            style: const TextStyle(fontSize: 12, color: Colors.white),
-          ),
-          backgroundColor: Colors.blue,
-          deleteIconColor: Colors.white,
-          onDeleted: () {
-            setState(() {
-              _searchQuery = '';
-              _searchController.clear();
-              _isLoading = true;
-            });
-            _fetchReports();
-          },
-        ),
-      );
-    }
-
-    if (filterChips.isEmpty) {
-      return const SizedBox.shrink();
-    }
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-      child: Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        children: [
-          const Text(
-            'Active Filters: ',
-            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
-          ),
-          ...filterChips,
-          TextButton.icon(
-            onPressed: () {
-              setState(() {
-                _selectedCategoryIndex = 0;
-                _selectedSortOption = 'Latest';
-                _searchQuery = '';
-                _searchController.clear();
-                _isLoading = true;
-              });
-              _fetchReports();
-            },
-            icon: const Icon(Icons.clear, size: 16),
-            label: const Text('Clear All'),
-            style: TextButton.styleFrom(
-              foregroundColor: Colors.grey.shade700,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-            ),
-          ),
-        ],
       ),
     );
   }

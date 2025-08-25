@@ -14,8 +14,7 @@ class CollectorAnnouncementsScreen extends StatefulWidget {
 }
 
 class _CollectorAnnouncementsScreenState
-    extends State<CollectorAnnouncementsScreen>
-    with SingleTickerProviderStateMixin {
+    extends State<CollectorAnnouncementsScreen> with TickerProviderStateMixin {
   late TabController _tabController;
   bool _isSearching = false;
   final TextEditingController _searchController = TextEditingController();
@@ -56,7 +55,7 @@ class _CollectorAnnouncementsScreenState
   };
 
   // Updated category data with General and Community (Purok) categories
-  final List<Map<String, dynamic>> _categoryData = [
+  List<Map<String, dynamic>> _categoryData = [
     {
       'name': 'All',
       'icon': FontAwesomeIcons.thList,
@@ -72,32 +71,10 @@ class _CollectorAnnouncementsScreenState
       'icon': FontAwesomeIcons.bullhorn,
       'color': Colors.blue,
     },
-    {
-      'name': 'Purok 1',
-      'icon': FontAwesomeIcons.users,
-      'color': Colors.amber,
-    },
-    {
-      'name': 'Purok 2',
-      'icon': FontAwesomeIcons.users,
-      'color': Colors.green,
-    },
-    {
-      'name': 'Purok 3',
-      'icon': FontAwesomeIcons.users,
-      'color': Colors.purple,
-    },
-    {
-      'name': 'Purok 4',
-      'icon': FontAwesomeIcons.users,
-      'color': Colors.teal,
-    },
-    {
-      'name': 'Purok 5',
-      'icon': FontAwesomeIcons.users,
-      'color': Colors.deepOrange,
-    },
   ];
+
+  // Add a list to store available puroks dynamically
+  List<String> _availablePuroks = [];
 
   @override
   void initState() {
@@ -109,6 +86,25 @@ class _CollectorAnnouncementsScreenState
     _fetchCollectorBarangay();
   }
 
+  // Update tab controller when category data changes
+  void _updateTabController() {
+    if (_tabController.length != _categoryData.length) {
+      // Dispose the old controller
+      _tabController.dispose();
+
+      // Create a new controller with the updated length
+      _tabController = TabController(length: _categoryData.length, vsync: this);
+      _tabController.addListener(() {
+        setState(() {});
+      });
+
+      // Reset to first tab if the current index is out of bounds
+      if (_tabController.index >= _categoryData.length) {
+        _tabController.index = 0;
+      }
+    }
+  }
+
   @override
   void dispose() {
     _tabController.dispose();
@@ -116,12 +112,111 @@ class _CollectorAnnouncementsScreenState
     super.dispose();
   }
 
+  // Dynamically load all unique puroks from resident collection
+  Future<void> _loadAvailablePuroks() async {
+    try {
+      print('Loading available puroks for barangay: $_collectorBarangay');
+      final QuerySnapshot snapshot = await _firestore
+          .collection('resident')
+          .where('barangay', isEqualTo: _collectorBarangay)
+          .get();
+
+      // Extract all puroks and remove duplicates
+      final Set<String> puroks = {};
+      for (var doc in snapshot.docs) {
+        final userData = doc.data() as Map<String, dynamic>;
+        final purok = userData['purok']?.toString();
+        if (purok != null && purok.isNotEmpty) {
+          puroks.add(purok);
+        }
+      }
+
+      // Sort puroks numerically if possible
+      final sortedPuroks = puroks.toList()
+        ..sort((a, b) {
+          // Try to parse as numbers for natural sorting
+          try {
+            // Extract numbers from the purok strings
+            int aNum = int.parse(a.replaceAll(RegExp(r'[^0-9]'), ''));
+            int bNum = int.parse(b.replaceAll(RegExp(r'[^0-9]'), ''));
+            return aNum.compareTo(bNum);
+          } catch (e) {
+            // Fall back to string comparison if not parseable
+            return a.compareTo(b);
+          }
+        });
+
+      // Build category data with dynamic puroks
+      List<Map<String, dynamic>> categoryData = [
+        {
+          'name': 'All',
+          'icon': FontAwesomeIcons.thList,
+          'color': const Color.fromARGB(255, 3, 144, 123),
+        },
+        {
+          'name': 'Urgent',
+          'icon': FontAwesomeIcons.exclamationCircle,
+          'color': Colors.red,
+        },
+        {
+          'name': 'General',
+          'icon': FontAwesomeIcons.bullhorn,
+          'color': Colors.blue,
+        },
+      ];
+
+      // Add purok categories from the dynamically loaded puroks
+      int colorIndex = 0;
+      List<Color> purokColors = [
+        Colors.amber,
+        Colors.green,
+        Colors.purple,
+        Colors.teal,
+        Colors.deepOrange,
+        Colors.indigo,
+        Colors.pink,
+        Colors.cyan,
+        Colors.brown
+      ];
+
+      for (String purok in sortedPuroks) {
+        categoryData.add({
+          'name': _formatPurokDisplay(purok),
+          'icon': FontAwesomeIcons.users,
+          'color': purokColors[colorIndex % purokColors.length],
+        });
+        colorIndex++;
+      }
+
+      setState(() {
+        _availablePuroks = sortedPuroks;
+        _categoryData = categoryData;
+      });
+
+      // Update tab controller if needed
+      _updateTabController();
+
+      print('Available puroks loaded: $_availablePuroks');
+    } catch (e) {
+      print('Error loading puroks: $e');
+    }
+  }
+
+  // Helper function to format purok display
+  String _formatPurokDisplay(String purok) {
+    // If purok already starts with "Purok", return as is
+    if (purok.toLowerCase().startsWith('purok')) {
+      return purok;
+    }
+    // Otherwise, add "Purok" prefix
+    return 'Purok $purok';
+  }
+
   // Fetch the collector's barangay first
   Future<void> _fetchCollectorBarangay() async {
     try {
       User? currentUser = _auth.currentUser;
       if (currentUser != null) {
-        // Use the collector collection for collectors
         DocumentSnapshot collectorDoc =
             await _firestore.collection('collector').doc(currentUser.uid).get();
 
@@ -130,50 +225,22 @@ class _CollectorAnnouncementsScreenState
               collectorDoc.data() as Map<String, dynamic>;
           _collectorBarangay = collectorData['barangay'] ?? '';
 
-          // Now fetch announcements for this barangay
-          await _fetchAnnouncements();
+          // Now fetch announcements and load available puroks for this barangay
+          await Future.wait([
+            _fetchAnnouncements(),
+            _loadAvailablePuroks(),
+          ]);
         } else {
-          // Handle case where collector document doesn't exist
-          setState(() {
-            _isLoading = false;
-          });
-
-          // Show error message
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                  'User profile not found. Please complete your profile first.'),
-              backgroundColor: Colors.red,
-            ),
-          );
+          print('Collector doc does not exist for uid: ${currentUser.uid}');
         }
       } else {
-        // Handle case where user is not authenticated
-        setState(() {
-          _isLoading = false;
-        });
-
-        // Show error message
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('You need to be logged in to view announcements.'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        print('No current user found');
       }
     } catch (e) {
       print('Error fetching collector barangay: ${e.toString()}');
       setState(() {
         _isLoading = false;
       });
-
-      // Show error message with the actual error
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error: ${e.toString()}'),
-          backgroundColor: Colors.red,
-        ),
-      );
     }
   }
 
@@ -297,10 +364,13 @@ class _CollectorAnnouncementsScreenState
             .where((announcement) => announcement['purok'] == 'General')
             .toList();
       } else {
-        // Filter by Purok
-        filtered = filtered
-            .where((announcement) => announcement['purok'] == categoryFilter)
-            .toList();
+        // Filter by Purok (match both 'Purok X' and 'X')
+        String purokNumber = categoryFilter.replaceAll('Purok ', '').trim();
+        filtered = filtered.where((announcement) {
+          String announcementPurok = announcement['purok'].toString().trim();
+          return announcementPurok == purokNumber ||
+              announcementPurok == categoryFilter;
+        }).toList();
       }
     }
 
@@ -796,7 +866,8 @@ class _CollectorAnnouncementsScreenState
                                     color: categoryColor.withOpacity(0.3)),
                               ),
                               child: Text(
-                                announcement['purok'].toString(),
+                                _formatPurokDisplay(
+                                    announcement['purok'].toString()),
                                 style: TextStyle(
                                   fontSize: 10,
                                   fontWeight: FontWeight.bold,

@@ -11,6 +11,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import '../../services/pdf_service.dart';
 import 'dart:typed_data';
 import 'package:flutter/rendering.dart';
+import 'features/ai_analytics_screen.dart';
 
 class AnalyticsScreen extends StatefulWidget {
   const AnalyticsScreen({Key? key}) : super(key: key);
@@ -39,11 +40,13 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
 
   // Time filter
   String _selectedTimeFilter = 'This Month';
+  String? _selectedMonth; // Holds the selected month (e.g., 'Jul 2023')
   final List<String> _timeFilters = [
     'This Week',
     'This Month',
     'This Year',
-    'All Time'
+    'All Time',
+    'Select Month', // New option
   ];
 
   // Color scheme
@@ -175,6 +178,10 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
         'General Waste': 0.0,
       };
 
+      // Get date range for filtering
+      DateTime startDate = _getStartDate(_selectedTimeFilter);
+      DateTime endDate = _getEndDate(_selectedTimeFilter);
+
       // Process scan data
       for (var doc in scansSnapshot.docs) {
         try {
@@ -184,6 +191,12 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
           if (data['timestamp'] == null) continue;
 
           DateTime scanDate = (data['timestamp'] as Timestamp).toDate();
+
+          // Filter data based on selected time range
+          if (scanDate.isBefore(startDate) || scanDate.isAfter(endDate)) {
+            continue; // Skip data outside the selected time range
+          }
+
           String rawWasteType = data['garbageType'] ?? 'General Waste';
           double weight = (data['garbageWeight'] ?? 0).toDouble();
           String purok = data['purok'] ?? 'Unknown';
@@ -216,6 +229,22 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
           _totalWasteCollected += weight;
           _totalCollections++;
 
+          // Check for warnings and penalties
+          bool hasWarnings = false;
+          bool hasPenalties = false;
+
+          if (data['warnings'] != null && data['warnings'] is Map) {
+            Map<String, dynamic> warnings =
+                data['warnings'] as Map<String, dynamic>;
+            hasWarnings = warnings.values.any((value) => value == true);
+          }
+
+          if (data['penalties'] != null && data['penalties'] is Map) {
+            Map<String, dynamic> penalties =
+                data['penalties'] as Map<String, dynamic>;
+            hasPenalties = penalties.values.any((value) => value == true);
+          }
+
           // Add to recent collections
           _recentCollections.add({
             'date': scanDate,
@@ -223,6 +252,10 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
             'weight': weight,
             'purok': purok,
             'residentName': data['residentName'] ?? 'Unknown',
+            'warnings': data['warnings'] ?? {},
+            'penalties': data['penalties'] ?? {},
+            'hasWarnings': hasWarnings,
+            'hasPenalties': hasPenalties,
           });
         } catch (e) {
           print('Error processing scan document: $e');
@@ -230,9 +263,22 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
         }
       }
 
-      // Sort recent collections by date
+      // Sort recent collections by date and filter by selected time period
       _recentCollections.sort((a, b) => b['date'].compareTo(a['date']));
-      _recentCollections = _recentCollections.take(5).toList();
+
+      // Filter recent collections based on selected time period
+      DateTime filterStartDate = _getStartDate(_selectedTimeFilter);
+      DateTime filterEndDate = _getEndDate(_selectedTimeFilter);
+
+      _recentCollections = _recentCollections
+          .where((collection) {
+            DateTime collectionDate = collection['date'];
+            return collectionDate
+                    .isAfter(filterStartDate.subtract(Duration(days: 1))) &&
+                collectionDate.isBefore(filterEndDate.add(Duration(days: 1)));
+          })
+          .take(10) // Show more collections since we're filtering by time
+          .toList();
 
       setState(() {
         _isLoading = false;
@@ -256,6 +302,11 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
 
   DateTime _getStartDate(String timeFilter) {
     final now = DateTime.now();
+    if (timeFilter == 'Select Month' && _selectedMonth != null) {
+      // Parse the selected month
+      final dt = DateFormat('MMM yyyy').parse(_selectedMonth!);
+      return DateTime(dt.year, dt.month, 1);
+    }
     switch (timeFilter) {
       case 'This Week':
         return now.subtract(Duration(days: now.weekday - 1));
@@ -267,6 +318,28 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
         return DateTime(2000); // A long time ago
       default:
         return DateTime(now.year, now.month, 1);
+    }
+  }
+
+  DateTime _getEndDate(String timeFilter) {
+    final now = DateTime.now();
+    if (timeFilter == 'Select Month' && _selectedMonth != null) {
+      // Parse the selected month and get the last day of that month
+      final dt = DateFormat('MMM yyyy').parse(_selectedMonth!);
+      return DateTime(dt.year, dt.month + 1, 0); // Last day of the month
+    }
+    switch (timeFilter) {
+      case 'This Week':
+        return now.add(Duration(days: 7 - now.weekday));
+      case 'This Month':
+        return DateTime(
+            now.year, now.month + 1, 0); // Last day of current month
+      case 'This Year':
+        return DateTime(now.year, 12, 31);
+      case 'All Time':
+        return now;
+      default:
+        return DateTime(now.year, now.month + 1, 0);
     }
   }
 
@@ -313,21 +386,65 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   _buildTimeFilter(),
-                  ElevatedButton.icon(
-                    onPressed: _generateAnalyticsReport,
-                    icon: const Icon(Icons.download),
-                    label: const Text('Download Report'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: primaryColor,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 12),
-                    ),
+                  Row(
+                    children: [
+                      ElevatedButton.icon(
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => AIAnalyticsScreen(
+                                adminBarangay: _adminBarangay,
+                              ),
+                            ),
+                          );
+                        },
+                        icon: const Icon(Icons.psychology),
+                        label: const Text('AI Analytics'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: secondaryColor,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 12),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      ElevatedButton.icon(
+                        onPressed: _generateAnalyticsReport,
+                        icon: const Icon(Icons.download),
+                        label: const Text('Download Report'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: primaryColor,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 12),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
               const SizedBox(height: 20),
-              _buildOverviewCards(),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 16),
+                    child: Text(
+                      _selectedTimeFilter == 'Select Month' &&
+                              _selectedMonth != null
+                          ? 'Overview for ${DateFormat('MMMM yyyy').format(DateFormat('MMM yyyy').parse(_selectedMonth!))}'
+                          : 'Overview for $_selectedTimeFilter',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: textPrimaryColor,
+                      ),
+                    ),
+                  ),
+                  _buildOverviewCards(),
+                ],
+              ),
               const SizedBox(height: 20),
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -541,62 +658,267 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
           ],
         ),
         child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          mainAxisAlignment: MainAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            Row(
-              children: [
-                Icon(
-                  Icons.calendar_month,
-                  color: primaryColor,
-                  size: 20,
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  'Time Period',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: textPrimaryColor,
-                  ),
-                ),
-              ],
+            Icon(
+              Icons.calendar_month,
+              color: primaryColor,
+              size: 20,
             ),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: primaryColor.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
+            const SizedBox(width: 8),
+            Text(
+              'Time Period',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: textPrimaryColor,
               ),
-              child: DropdownButton<String>(
-                value: _selectedTimeFilter,
-                items: _timeFilters.map((String value) {
-                  return DropdownMenuItem<String>(
-                    value: value,
-                    child: Text(
-                      value,
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                        color: textPrimaryColor,
-                      ),
+            ),
+            const SizedBox(width: 24),
+            DropdownButton<String>(
+              value: _selectedTimeFilter,
+              items: _timeFilters.map((String value) {
+                return DropdownMenuItem<String>(
+                  value: value,
+                  child: Text(
+                    value,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: textPrimaryColor,
                     ),
+                  ),
+                );
+              }).toList(),
+              onChanged: (String? newValue) async {
+                if (newValue == null) return;
+                if (newValue == 'Select Month') {
+                  final now = DateTime.now();
+                  DateTime? picked = await showDialog<DateTime>(
+                    context: context,
+                    builder: (context) {
+                      int selectedYear = now.year;
+                      int selectedMonth = now.month;
+                      return StatefulBuilder(
+                        builder: (context, setStateDialog) {
+                          return AlertDialog(
+                            title: const Text('Select Month'),
+                            content: SizedBox(
+                              height: 120,
+                              child: Column(
+                                children: [
+                                  DropdownButton<int>(
+                                    value: selectedMonth,
+                                    items: List.generate(12, (i) => i + 1)
+                                        .map((month) => DropdownMenuItem(
+                                              value: month,
+                                              child: Text(DateFormat('MMMM')
+                                                  .format(DateTime(0, month))),
+                                            ))
+                                        .toList(),
+                                    onChanged: (int? month) {
+                                      if (month != null) {
+                                        setStateDialog(() {
+                                          selectedMonth = month;
+                                        });
+                                      }
+                                    },
+                                  ),
+                                  DropdownButton<int>(
+                                    value: selectedYear,
+                                    items: List.generate(
+                                            10, (i) => now.year - 5 + i)
+                                        .map((year) => DropdownMenuItem(
+                                              value: year,
+                                              child: Text(year.toString()),
+                                            ))
+                                        .toList(),
+                                    onChanged: (int? year) {
+                                      if (year != null) {
+                                        setStateDialog(() {
+                                          selectedYear = year;
+                                        });
+                                      }
+                                    },
+                                  ),
+                                ],
+                              ),
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.of(context).pop(),
+                                child: const Text('Cancel'),
+                              ),
+                              TextButton(
+                                onPressed: () {
+                                  Navigator.of(context).pop(
+                                      DateTime(selectedYear, selectedMonth));
+                                },
+                                child: const Text('OK'),
+                              ),
+                            ],
+                          );
+                        },
+                      );
+                    },
                   );
-                }).toList(),
-                onChanged: (String? newValue) {
-                  if (newValue != null && newValue != _selectedTimeFilter) {
+                  if (picked != null) {
                     setState(() {
-                      _selectedTimeFilter = newValue;
+                      _selectedTimeFilter =
+                          'Select Month'; // Ensure this is set
+                      _selectedMonth = DateFormat('MMM yyyy').format(picked);
+                      print('Selected month: $_selectedMonth');
+                    });
+                    _loadAnalyticsData();
+                  }
+                } else {
+                  setState(() {
+                    _selectedTimeFilter = newValue;
+                    _selectedMonth = null;
+                  });
+                  _loadAnalyticsData();
+                }
+              },
+              underline: const SizedBox(),
+              icon: Icon(Icons.arrow_drop_down, color: primaryColor),
+              dropdownColor: cardColor,
+              focusColor: Colors.transparent,
+              isDense: true,
+            ),
+            if (_selectedTimeFilter == 'Select Month' &&
+                _selectedMonth != null) ...[
+              const SizedBox(width: 8),
+              GestureDetector(
+                onTap: () async {
+                  final now = DateTime.now();
+                  // Parse the current selected month or use now
+                  DateTime initial = now;
+                  try {
+                    initial = DateFormat('MMM yyyy').parse(_selectedMonth!);
+                  } catch (_) {}
+                  DateTime? picked = await showDialog<DateTime>(
+                    context: context,
+                    builder: (context) {
+                      int selectedYear = initial.year;
+                      int selectedMonth = initial.month;
+                      return StatefulBuilder(
+                        builder: (context, setStateDialog) {
+                          return AlertDialog(
+                            title: const Text('Select Month'),
+                            content: SizedBox(
+                              height: 120,
+                              child: Column(
+                                children: [
+                                  DropdownButton<int>(
+                                    value: selectedMonth,
+                                    items: List.generate(12, (i) => i + 1)
+                                        .map((month) => DropdownMenuItem(
+                                              value: month,
+                                              child: Text(DateFormat('MMMM')
+                                                  .format(DateTime(0, month))),
+                                            ))
+                                        .toList(),
+                                    onChanged: (int? month) {
+                                      if (month != null) {
+                                        setStateDialog(() {
+                                          selectedMonth = month;
+                                        });
+                                      }
+                                    },
+                                  ),
+                                  DropdownButton<int>(
+                                    value: selectedYear,
+                                    items: List.generate(
+                                            10, (i) => now.year - 5 + i)
+                                        .map((year) => DropdownMenuItem(
+                                              value: year,
+                                              child: Text(year.toString()),
+                                            ))
+                                        .toList(),
+                                    onChanged: (int? year) {
+                                      if (year != null) {
+                                        setStateDialog(() {
+                                          selectedYear = year;
+                                        });
+                                      }
+                                    },
+                                  ),
+                                ],
+                              ),
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.of(context).pop(),
+                                child: const Text('Cancel'),
+                              ),
+                              TextButton(
+                                onPressed: () {
+                                  Navigator.of(context).pop(
+                                      DateTime(selectedYear, selectedMonth));
+                                },
+                                child: const Text('OK'),
+                              ),
+                            ],
+                          );
+                        },
+                      );
+                    },
+                  );
+                  if (picked != null) {
+                    setState(() {
+                      _selectedTimeFilter =
+                          'Select Month'; // Ensure this is set
+                      _selectedMonth = DateFormat('MMM yyyy').format(picked);
+                      print('Selected month: $_selectedMonth');
                     });
                     _loadAnalyticsData();
                   }
                 },
-                underline: const SizedBox(),
-                icon: Icon(Icons.arrow_drop_down, color: primaryColor),
-                dropdownColor: cardColor,
-                focusColor: Colors.transparent,
-                isDense: true,
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: primaryColor.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.calendar_month, color: primaryColor, size: 18),
+                      const SizedBox(width: 6),
+                      Builder(
+                        builder: (context) {
+                          try {
+                            return Text(
+                              DateFormat('MMMM yyyy').format(
+                                  DateFormat('MMM yyyy')
+                                      .parse(_selectedMonth!)),
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                                color: primaryColor,
+                              ),
+                            );
+                          } catch (_) {
+                            return Text(
+                              _selectedMonth!,
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                                color: primaryColor,
+                              ),
+                            );
+                          }
+                        },
+                      ),
+                      const SizedBox(width: 4),
+                      Icon(Icons.edit, color: primaryColor, size: 16),
+                    ],
+                  ),
+                ),
               ),
-            ),
+            ],
           ],
         ),
       ),
@@ -604,12 +926,18 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
   }
 
   Widget _buildOverviewCards() {
+    // Calculate warning and penalty counts
+    int totalWarnings =
+        _recentCollections.where((c) => c['hasWarnings'] == true).length;
+    int totalPenalties =
+        _recentCollections.where((c) => c['hasPenalties'] == true).length;
+
     return GridView.count(
-      crossAxisCount: 3,
+      crossAxisCount: 4,
       shrinkWrap: true,
       crossAxisSpacing: 16,
       mainAxisSpacing: 16,
-      childAspectRatio: 1.8,
+      childAspectRatio: 1.4,
       children: [
         _buildOverviewCard(
           'Total Waste Collected',
@@ -624,10 +952,16 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
           secondaryColor,
         ),
         _buildOverviewCard(
-          'Average per Collection',
-          '${(_totalWasteCollected / (_totalCollections == 0 ? 1 : _totalCollections)).toStringAsFixed(1)} kg',
-          Icons.analytics,
-          accentColor,
+          'Warnings',
+          totalWarnings.toString(),
+          Icons.warning_amber_rounded,
+          Colors.orange,
+        ),
+        _buildOverviewCard(
+          'Penalties',
+          totalPenalties.toString(),
+          Icons.block,
+          Colors.red,
         ),
       ],
     );
@@ -792,7 +1126,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                     child: BarChart(
                       BarChartData(
                         alignment: BarChartAlignment.spaceAround,
-                        maxY: (sortedWasteEntries.first.value * 1.2).toDouble(),
+                        maxY: sortedWasteEntries.isNotEmpty
+                            ? (sortedWasteEntries.first.value * 1.2).toDouble()
+                            : 10.0,
                         barTouchData: BarTouchData(
                           enabled: true,
                           touchTooltipData: BarTouchTooltipData(
@@ -911,11 +1247,18 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
 
     // Get the date range based on the selected time filter
     DateTime startDate = _getStartDate(_selectedTimeFilter);
-    DateTime endDate = DateTime.now();
+    DateTime endDate = _getEndDate(_selectedTimeFilter);
 
-    // Filter to only days with actual scan data
+    // Filter to only days with actual scan data within the selected time range
     List<MapEntry<String, int>> filteredScans =
-        _dailyScansCount.entries.where((entry) => entry.value > 0).toList();
+        _dailyScansCount.entries.where((entry) {
+      if (entry.value <= 0) return false;
+
+      // Check if the date is within the selected time range
+      DateTime scanDate = DateFormat('MMM d, yyyy').parse(entry.key);
+      return scanDate.isAfter(startDate.subtract(Duration(days: 1))) &&
+          scanDate.isBefore(endDate.add(Duration(days: 1)));
+    }).toList();
 
     // Sort the filtered scans by date
     filteredScans.sort((a, b) {
@@ -936,9 +1279,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
             .format(DateFormat('MMM d, yyyy').parse(entry.key)))
         .toList();
 
-    // Get total scans for display
-    int totalScans =
-        _dailyScansCount.values.fold(0, (sum, count) => sum + count);
+    // Get total scans for display (only for the filtered data)
+    int totalScans = filteredScans.fold(0, (sum, entry) => sum + entry.value);
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -961,8 +1303,10 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
-                'Daily Resident Scans',
+              Text(
+                _selectedTimeFilter == 'Select Month' && _selectedMonth != null
+                    ? 'Daily Resident Scans - ${DateFormat('MMMM yyyy').format(DateFormat('MMM yyyy').parse(_selectedMonth!))}'
+                    : 'Daily Resident Scans',
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
@@ -1008,20 +1352,147 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                       ),
                     ),
                   )
-                : CustomPaint(
-                    size: Size(double.infinity, double.infinity),
-                    painter: AnalyticsLineChartPainter(
-                      data: scanData,
-                      labels: dayLabels,
-                      maxValue: scanData.isEmpty
-                          ? 10
-                          : (scanData
-                                  .map((spot) => spot.y)
-                                  .reduce((a, b) => a > b ? a : b) *
-                              1.2),
-                      lineColor: accentColor,
-                      showTooltip: true,
-                      tooltipUnit: 'scans',
+                : AnimatedOpacity(
+                    opacity: _isLoading ? 0.3 : 1.0,
+                    duration: const Duration(milliseconds: 500),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16.0),
+                      child: LineChart(
+                        LineChartData(
+                          lineTouchData: LineTouchData(
+                            touchTooltipData: LineTouchTooltipData(
+                              tooltipBgColor: Colors.grey.shade800,
+                              tooltipRoundedRadius: 10,
+                              tooltipPadding: const EdgeInsets.all(12),
+                              tooltipMargin: 20,
+                              fitInsideHorizontally: true,
+                              fitInsideVertically: true,
+                              getTooltipItems:
+                                  (List<LineBarSpot> touchedSpots) {
+                                return touchedSpots.map((spot) {
+                                  final dayIndex = spot.x.toInt();
+                                  if (dayIndex >= 0 &&
+                                      dayIndex < filteredScans.length) {
+                                    final dayData = filteredScans[dayIndex];
+                                    final date = DateFormat('MMM d, yyyy')
+                                        .parse(dayData.key);
+                                    return LineTooltipItem(
+                                      DateFormat('MMM d, yyyy').format(date),
+                                      const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 14,
+                                      ),
+                                      children: [
+                                        TextSpan(
+                                          text: '\n${spot.y.toInt()} scans',
+                                          style: TextStyle(
+                                            color:
+                                                Colors.white.withOpacity(0.9),
+                                            fontWeight: FontWeight.normal,
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                      ],
+                                    );
+                                  }
+                                  return LineTooltipItem('', const TextStyle());
+                                }).toList();
+                              },
+                            ),
+                            handleBuiltInTouches: true,
+                          ),
+                          gridData: FlGridData(
+                            show: true,
+                            drawVerticalLine: false,
+                            getDrawingHorizontalLine: (value) {
+                              return FlLine(
+                                color: Colors.grey.withOpacity(0.15),
+                                strokeWidth: 1,
+                                dashArray: [6, 4],
+                              );
+                            },
+                          ),
+                          titlesData: FlTitlesData(
+                            show: true,
+                            bottomTitles: AxisTitles(
+                              sideTitles: SideTitles(showTitles: false),
+                            ),
+                            leftTitles: AxisTitles(
+                              sideTitles: SideTitles(
+                                showTitles: true,
+                                reservedSize: 32,
+                                getTitlesWidget: (value, meta) {
+                                  return Text(
+                                    '${value.toInt()}',
+                                    style: const TextStyle(
+                                      color: Colors.grey,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 12,
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
+                            topTitles: AxisTitles(
+                                sideTitles: SideTitles(showTitles: false)),
+                            rightTitles: AxisTitles(
+                                sideTitles: SideTitles(showTitles: false)),
+                          ),
+                          borderData: FlBorderData(
+                            show: true,
+                            border: Border(
+                              bottom: BorderSide(
+                                color: Colors.grey.withOpacity(0.2),
+                                width: 1,
+                              ),
+                              left: BorderSide(
+                                color: Colors.grey.withOpacity(0.2),
+                                width: 1,
+                              ),
+                            ),
+                          ),
+                          lineBarsData: [
+                            LineChartBarData(
+                              spots: scanData,
+                              isCurved: true,
+                              curveSmoothness: 0.4,
+                              color: accentColor,
+                              barWidth: 3,
+                              isStrokeCapRound: true,
+                              dotData: FlDotData(
+                                show: true,
+                                getDotPainter: (spot, percent, barData, index) {
+                                  return FlDotCirclePainter(
+                                    radius: 5,
+                                    color: accentColor,
+                                    strokeWidth: 3,
+                                    strokeColor: Colors.white,
+                                  );
+                                },
+                              ),
+                              belowBarData: BarAreaData(
+                                show: true,
+                                gradient: LinearGradient(
+                                  colors: [
+                                    accentColor.withOpacity(0.5),
+                                    accentColor.withOpacity(0.2),
+                                    accentColor.withOpacity(0.05),
+                                  ],
+                                  stops: const [0.1, 0.5, 0.9],
+                                  begin: Alignment.topCenter,
+                                  end: Alignment.bottomCenter,
+                                ),
+                              ),
+                              shadow: Shadow(
+                                blurRadius: 8,
+                                color: accentColor.withOpacity(0.3),
+                                offset: const Offset(0, 4),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
                   ),
           ),
@@ -1052,8 +1523,10 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
-                'Monthly Collection Trends',
+              Text(
+                _selectedTimeFilter == 'Select Month' && _selectedMonth != null
+                    ? 'Daily Collection Trends - ${DateFormat('MMMM yyyy').format(DateFormat('MMM yyyy').parse(_selectedMonth!))}'
+                    : 'Monthly Collection Trends',
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
@@ -1124,191 +1597,257 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                 : AnimatedOpacity(
                     opacity: _isLoading ? 0.3 : 1.0,
                     duration: const Duration(milliseconds: 500),
-                    child: LineChart(
-                      LineChartData(
-                        lineTouchData: LineTouchData(
-                          touchTooltipData: LineTouchTooltipData(
-                            tooltipBgColor: Colors.grey.shade800,
-                            tooltipRoundedRadius: 10,
-                            tooltipPadding: const EdgeInsets.all(12),
-                            tooltipMargin: 8,
-                            getTooltipItems: (List<LineBarSpot> touchedSpots) {
-                              return touchedSpots.map((spot) {
-                                final monthIndex = spot.x.toInt();
-                                final months =
-                                    _monthlyCollectionData.keys.toList()
-                                      ..sort((a, b) {
-                                        // Sort months chronologically
-                                        DateTime dateA =
-                                            DateFormat('MMM yyyy').parse(a);
-                                        DateTime dateB =
-                                            DateFormat('MMM yyyy').parse(b);
-                                        return dateA.compareTo(dateB);
-                                      });
-                                if (monthIndex >= 0 &&
-                                    monthIndex < months.length) {
-                                  return LineTooltipItem(
-                                    '${months[monthIndex]}',
-                                    const TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 14,
-                                    ),
-                                    children: [
-                                      TextSpan(
-                                        text:
-                                            '\n${spot.y.toStringAsFixed(1)} kg',
-                                        style: TextStyle(
-                                          color: Colors.white.withOpacity(0.9),
-                                          fontWeight: FontWeight.normal,
-                                          fontSize: 12,
+                    child: Padding(
+                      padding: const EdgeInsets.all(16.0),
+                      child: LineChart(
+                        LineChartData(
+                          lineTouchData: LineTouchData(
+                            touchTooltipData: LineTouchTooltipData(
+                              tooltipBgColor: Colors.grey.shade800,
+                              tooltipRoundedRadius: 10,
+                              tooltipPadding: const EdgeInsets.all(12),
+                              tooltipMargin: 20,
+                              fitInsideHorizontally: true,
+                              fitInsideVertically: true,
+                              getTooltipItems:
+                                  (List<LineBarSpot> touchedSpots) {
+                                return touchedSpots.map((spot) {
+                                  if (_selectedTimeFilter == 'Select Month' &&
+                                      _selectedMonth != null) {
+                                    // Show daily data for selected month
+                                    final sortedDays =
+                                        _dailyScansCount.entries.toList()
+                                          ..sort((a, b) {
+                                            DateTime dateA =
+                                                DateFormat('MMM d, yyyy')
+                                                    .parse(a.key);
+                                            DateTime dateB =
+                                                DateFormat('MMM d, yyyy')
+                                                    .parse(b.key);
+                                            return dateA.compareTo(dateB);
+                                          });
+
+                                    final selectedMonth = DateFormat('MMM yyyy')
+                                        .parse(_selectedMonth!);
+                                    final filteredDays =
+                                        sortedDays.where((day) {
+                                      final date = DateFormat('MMM d, yyyy')
+                                          .parse(day.key);
+                                      return date.year == selectedMonth.year &&
+                                          date.month == selectedMonth.month;
+                                    }).toList();
+
+                                    final dayIndex = spot.x.toInt();
+                                    if (dayIndex >= 0 &&
+                                        dayIndex < filteredDays.length) {
+                                      final dayData = filteredDays[dayIndex];
+                                      final date = DateFormat('MMM d, yyyy')
+                                          .parse(dayData.key);
+                                      return LineTooltipItem(
+                                        DateFormat('MMM d, yyyy').format(date),
+                                        const TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 14,
                                         ),
-                                      ),
-                                    ],
-                                  );
-                                }
-                                return LineTooltipItem('', const TextStyle());
-                              }).toList();
+                                        children: [
+                                          TextSpan(
+                                            text: '\n${spot.y.toInt()} scans',
+                                            style: TextStyle(
+                                              color:
+                                                  Colors.white.withOpacity(0.9),
+                                              fontWeight: FontWeight.normal,
+                                              fontSize: 12,
+                                            ),
+                                          ),
+                                        ],
+                                      );
+                                    }
+                                  } else {
+                                    // Show monthly data for other time filters
+                                    final monthIndex = spot.x.toInt();
+                                    final months =
+                                        _monthlyCollectionData.keys.toList()
+                                          ..sort((a, b) {
+                                            // Sort months chronologically
+                                            DateTime dateA =
+                                                DateFormat('MMM yyyy').parse(a);
+                                            DateTime dateB =
+                                                DateFormat('MMM yyyy').parse(b);
+                                            return dateA.compareTo(dateB);
+                                          });
+                                    if (monthIndex >= 0 &&
+                                        monthIndex < months.length) {
+                                      return LineTooltipItem(
+                                        '${months[monthIndex]}',
+                                        const TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 14,
+                                        ),
+                                        children: [
+                                          TextSpan(
+                                            text:
+                                                '\n${spot.y.toStringAsFixed(1)} kg',
+                                            style: TextStyle(
+                                              color:
+                                                  Colors.white.withOpacity(0.9),
+                                              fontWeight: FontWeight.normal,
+                                              fontSize: 12,
+                                            ),
+                                          ),
+                                        ],
+                                      );
+                                    }
+                                  }
+                                  return LineTooltipItem('', const TextStyle());
+                                }).toList();
+                              },
+                            ),
+                            handleBuiltInTouches: true,
+                          ),
+                          gridData: FlGridData(
+                            show: true,
+                            drawVerticalLine: false,
+                            getDrawingHorizontalLine: (value) {
+                              return FlLine(
+                                color: Colors.grey.withOpacity(0.15),
+                                strokeWidth: 1,
+                                dashArray: [6, 4],
+                              );
                             },
                           ),
-                          handleBuiltInTouches: true,
-                        ),
-                        gridData: FlGridData(
-                          show: true,
-                          drawVerticalLine: false,
-                          getDrawingHorizontalLine: (value) {
-                            return FlLine(
-                              color: Colors.grey.withOpacity(0.15),
-                              strokeWidth: 1,
-                              dashArray: [6, 4],
-                            );
-                          },
-                        ),
-                        titlesData: FlTitlesData(
-                          show: true,
-                          bottomTitles: AxisTitles(
-                            sideTitles: SideTitles(
-                              showTitles: true,
-                              getTitlesWidget: (value, meta) {
-                                // Sort months chronologically
-                                final sortedMonths =
-                                    _monthlyCollectionData.keys.toList()
-                                      ..sort((a, b) {
-                                        DateTime dateA =
-                                            DateFormat('MMM yyyy').parse(a);
-                                        DateTime dateB =
-                                            DateFormat('MMM yyyy').parse(b);
-                                        return dateA.compareTo(dateB);
-                                      });
-
-                                if (value.toInt() >= sortedMonths.length) {
-                                  return const Text('');
-                                }
-                                return Padding(
-                                  padding: const EdgeInsets.only(top: 8.0),
-                                  child: Text(
-                                    sortedMonths[value.toInt()],
+                          titlesData: FlTitlesData(
+                            show: true,
+                            bottomTitles: AxisTitles(
+                              sideTitles: SideTitles(showTitles: false),
+                            ),
+                            leftTitles: AxisTitles(
+                              sideTitles: SideTitles(
+                                showTitles: true,
+                                reservedSize: 32,
+                                getTitlesWidget: (value, meta) {
+                                  return Text(
+                                    '${value.toInt()}',
                                     style: const TextStyle(
                                       color: Colors.grey,
                                       fontWeight: FontWeight.bold,
                                       fontSize: 12,
                                     ),
-                                  ),
-                                );
-                              },
+                                  );
+                                },
+                              ),
+                            ),
+                            topTitles: AxisTitles(
+                                sideTitles: SideTitles(showTitles: false)),
+                            rightTitles: AxisTitles(
+                                sideTitles: SideTitles(showTitles: false)),
+                          ),
+                          borderData: FlBorderData(
+                            show: true,
+                            border: Border(
+                              bottom: BorderSide(
+                                color: Colors.grey.withOpacity(0.2),
+                                width: 1,
+                              ),
+                              left: BorderSide(
+                                color: Colors.grey.withOpacity(0.2),
+                                width: 1,
+                              ),
                             ),
                           ),
-                          leftTitles: AxisTitles(
-                            sideTitles: SideTitles(
-                              showTitles: true,
-                              reservedSize: 32,
-                              getTitlesWidget: (value, meta) {
-                                return Text(
-                                  '${value.toInt()}',
-                                  style: const TextStyle(
-                                    color: Colors.grey,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 12,
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                          topTitles: AxisTitles(
-                              sideTitles: SideTitles(showTitles: false)),
-                          rightTitles: AxisTitles(
-                              sideTitles: SideTitles(showTitles: false)),
-                        ),
-                        borderData: FlBorderData(
-                          show: true,
-                          border: Border(
-                            bottom: BorderSide(
-                              color: Colors.grey.withOpacity(0.2),
-                              width: 1,
-                            ),
-                            left: BorderSide(
-                              color: Colors.grey.withOpacity(0.2),
-                              width: 1,
-                            ),
-                          ),
-                        ),
-                        lineBarsData: [
-                          LineChartBarData(
-                            spots: () {
-                              // Sort months chronologically
-                              final sortedMonths =
-                                  _monthlyCollectionData.keys.toList()
+                          lineBarsData: [
+                            LineChartBarData(
+                              spots: () {
+                                // If "Select Month" is chosen, show daily data for that month
+                                if (_selectedTimeFilter == 'Select Month' &&
+                                    _selectedMonth != null) {
+                                  // Get daily data for the selected month
+                                  final dailyData = <FlSpot>[];
+                                  final sortedDays = _dailyScansCount.entries
+                                      .toList()
                                     ..sort((a, b) {
-                                      DateTime dateA =
-                                          DateFormat('MMM yyyy').parse(a);
-                                      DateTime dateB =
-                                          DateFormat('MMM yyyy').parse(b);
+                                      DateTime dateA = DateFormat('MMM d, yyyy')
+                                          .parse(a.key);
+                                      DateTime dateB = DateFormat('MMM d, yyyy')
+                                          .parse(b.key);
                                       return dateA.compareTo(dateB);
                                     });
 
-                              // Create spots with sorted months
-                              return sortedMonths
-                                  .map((month) => FlSpot(
-                                      sortedMonths.indexOf(month).toDouble(),
-                                      _monthlyCollectionData[month] ?? 0))
-                                  .toList();
-                            }(),
-                            isCurved: true,
-                            curveSmoothness: 0.4,
-                            color: primaryColor,
-                            barWidth: 3,
-                            isStrokeCapRound: true,
-                            dotData: FlDotData(
-                              show: true,
-                              getDotPainter: (spot, percent, barData, index) {
-                                return FlDotCirclePainter(
-                                  radius: 5,
-                                  color: primaryColor,
-                                  strokeWidth: 3,
-                                  strokeColor: Colors.white,
-                                );
-                              },
-                            ),
-                            belowBarData: BarAreaData(
-                              show: true,
-                              gradient: LinearGradient(
-                                colors: [
-                                  primaryColor.withOpacity(0.5),
-                                  primaryColor.withOpacity(0.2),
-                                  primaryColor.withOpacity(0.05),
-                                ],
-                                stops: const [0.1, 0.5, 0.9],
-                                begin: Alignment.topCenter,
-                                end: Alignment.bottomCenter,
+                                  for (int i = 0; i < sortedDays.length; i++) {
+                                    final dayData = sortedDays[i];
+                                    final date = DateFormat('MMM d, yyyy')
+                                        .parse(dayData.key);
+                                    final selectedMonth = DateFormat('MMM yyyy')
+                                        .parse(_selectedMonth!);
+
+                                    // Only include data for the selected month
+                                    if (date.year == selectedMonth.year &&
+                                        date.month == selectedMonth.month) {
+                                      dailyData.add(FlSpot(i.toDouble(),
+                                          dayData.value.toDouble()));
+                                    }
+                                  }
+                                  return dailyData;
+                                } else {
+                                  // Sort months chronologically for other time filters
+                                  final sortedMonths =
+                                      _monthlyCollectionData.keys.toList()
+                                        ..sort((a, b) {
+                                          DateTime dateA =
+                                              DateFormat('MMM yyyy').parse(a);
+                                          DateTime dateB =
+                                              DateFormat('MMM yyyy').parse(b);
+                                          return dateA.compareTo(dateB);
+                                        });
+
+                                  // Create spots with sorted months
+                                  return sortedMonths
+                                      .map((month) => FlSpot(
+                                          sortedMonths
+                                              .indexOf(month)
+                                              .toDouble(),
+                                          _monthlyCollectionData[month] ?? 0))
+                                      .toList();
+                                }
+                              }(),
+                              isCurved: true,
+                              curveSmoothness: 0.4,
+                              color: primaryColor,
+                              barWidth: 3,
+                              isStrokeCapRound: true,
+                              dotData: FlDotData(
+                                show: true,
+                                getDotPainter: (spot, percent, barData, index) {
+                                  return FlDotCirclePainter(
+                                    radius: 5,
+                                    color: primaryColor,
+                                    strokeWidth: 3,
+                                    strokeColor: Colors.white,
+                                  );
+                                },
+                              ),
+                              belowBarData: BarAreaData(
+                                show: true,
+                                gradient: LinearGradient(
+                                  colors: [
+                                    primaryColor.withOpacity(0.5),
+                                    primaryColor.withOpacity(0.2),
+                                    primaryColor.withOpacity(0.05),
+                                  ],
+                                  stops: const [0.1, 0.5, 0.9],
+                                  begin: Alignment.topCenter,
+                                  end: Alignment.bottomCenter,
+                                ),
+                              ),
+                              shadow: Shadow(
+                                blurRadius: 8,
+                                color: primaryColor.withOpacity(0.3),
+                                offset: const Offset(0, 4),
                               ),
                             ),
-                            shadow: Shadow(
-                              blurRadius: 8,
-                              color: primaryColor.withOpacity(0.3),
-                              offset: const Offset(0, 4),
-                            ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
                   ),
@@ -1379,8 +1918,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                   )
                 : Column(
                     children: [
-                      Expanded(
-                        flex: 3,
+                      // Pie Chart Section with reduced size to prevent overlapping
+                      Container(
+                        height: 200, // Fixed height for pie chart
                         child: Stack(
                           alignment: Alignment.center,
                           children: [
@@ -1394,13 +1934,15 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                                   final color = _modernColors[
                                       index % _modernColors.length];
 
-                                  // Calculate percentage for this purok
-                                  final percentage = (entry.value /
-                                      _totalWasteCollected *
-                                      100);
+                                  // Pie chart percentage calculation
+                                  final percentage = _totalWasteCollected == 0
+                                      ? 0
+                                      : (entry.value /
+                                          _totalWasteCollected *
+                                          100);
 
-                                  // Always show labels for our standardized categories
-                                  final shouldShowLabel = true;
+                                  // Show labels only for larger sections to prevent overlapping
+                                  final shouldShowLabel = percentage >= 5;
 
                                   return PieChartSectionData(
                                     value: entry.value,
@@ -1408,9 +1950,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                                         ? '${percentage.toInt()}%'
                                         : '',
                                     color: color,
-                                    radius: 100,
+                                    radius: 80, // Reduced radius
                                     titleStyle: const TextStyle(
-                                      fontSize: 12,
+                                      fontSize: 10, // Smaller font
                                       fontWeight: FontWeight.bold,
                                       color: Colors.white,
                                     ),
@@ -1420,7 +1962,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                                   );
                                 }).toList(),
                                 sectionsSpace: 2,
-                                centerSpaceRadius: 40,
+                                centerSpaceRadius: 30, // Reduced center space
                                 startDegreeOffset: -90,
                                 pieTouchData: PieTouchData(
                                   touchCallback:
@@ -1433,8 +1975,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                             ),
                             // Center info
                             Container(
-                              width: 80,
-                              height: 80,
+                              width: 60, // Smaller center container
+                              height: 60,
                               decoration: BoxDecoration(
                                 color: Colors.white,
                                 shape: BoxShape.circle,
@@ -1452,7 +1994,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                                   Text(
                                     'Total',
                                     style: TextStyle(
-                                      fontSize: 12,
+                                      fontSize: 10, // Smaller font
                                       color: textSecondaryColor,
                                       fontWeight: FontWeight.w500,
                                     ),
@@ -1461,7 +2003,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                                   Text(
                                     '${_totalWasteCollected.toStringAsFixed(1)} kg',
                                     style: TextStyle(
-                                      fontSize: 14,
+                                      fontSize: 12, // Smaller font
                                       fontWeight: FontWeight.bold,
                                       color: primaryColor,
                                     ),
@@ -1472,82 +2014,102 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                           ],
                         ),
                       ),
-                      const SizedBox(height: 12),
+                      const SizedBox(height: 16),
+                      // Scrollable Legend Section
                       Expanded(
-                        flex: 2,
-                        child: ListView.builder(
-                          shrinkWrap: true,
-                          itemCount: _purokCollectionData.length,
-                          itemBuilder: (context, index) {
-                            final entries = _purokCollectionData.entries
-                                .toList()
-                              ..sort((a, b) => b.value.compareTo(
-                                  a.value)); // Sort by value descending
+                        child: Container(
+                          constraints: BoxConstraints(
+                            maxHeight: 150, // Maximum height for legend
+                          ),
+                          child: ListView.builder(
+                            shrinkWrap: true,
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            itemCount: _purokCollectionData.length,
+                            itemBuilder: (context, index) {
+                              final entries = _purokCollectionData.entries
+                                  .toList()
+                                ..sort((a, b) => b.value.compareTo(
+                                    a.value)); // Sort by value descending
 
-                            final entry = entries[index];
-                            final color = _modernColors[_purokCollectionData
-                                    .keys
-                                    .toList()
-                                    .indexOf(entry.key) %
-                                _modernColors.length];
-                            final percentage =
-                                (entry.value / _totalWasteCollected * 100)
-                                    .toStringAsFixed(1);
-                            final weight = entry.value.toStringAsFixed(1);
+                              final entry = entries[index];
+                              final color = _modernColors[_purokCollectionData
+                                      .keys
+                                      .toList()
+                                      .indexOf(entry.key) %
+                                  _modernColors.length];
+                              // List percentage calculation
+                              final percentage = _totalWasteCollected == 0
+                                  ? '0.0'
+                                  : (entry.value / _totalWasteCollected * 100)
+                                      .toStringAsFixed(1);
+                              final weight = entry.value.toStringAsFixed(1);
 
-                            return Container(
-                              margin: const EdgeInsets.only(bottom: 8),
-                              height: 36,
-                              child: Row(
-                                children: [
-                                  Container(
-                                    width: 12,
-                                    height: 12,
-                                    decoration: BoxDecoration(
-                                      color: color,
-                                      shape: BoxShape.circle,
-                                    ),
+                              return Container(
+                                margin: const EdgeInsets.only(bottom: 8),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 6),
+                                decoration: BoxDecoration(
+                                  color: Colors.grey.shade50,
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(
+                                    color: Colors.grey.shade200,
+                                    width: 0.5,
                                   ),
-                                  const SizedBox(width: 12),
-                                  // Purok name
-                                  Expanded(
-                                    flex: 3,
-                                    child: Text(
-                                      entry.key,
-                                      style: TextStyle(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.w500,
-                                        color: Colors.grey[800],
-                                      ),
-                                    ),
-                                  ),
-                                  // Percentage
-                                  Expanded(
-                                    flex: 1,
-                                    child: Text(
-                                      '$percentage%',
-                                      style: TextStyle(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.bold,
+                                ),
+                                child: Row(
+                                  children: [
+                                    Container(
+                                      width: 12,
+                                      height: 12,
+                                      decoration: BoxDecoration(
                                         color: color,
+                                        shape: BoxShape.circle,
                                       ),
                                     ),
-                                  ),
-                                  // Weight
-                                  Expanded(
-                                    flex: 1,
-                                    child: Text(
-                                      '$weight kg',
-                                      style: TextStyle(
-                                        fontSize: 14,
-                                        color: textSecondaryColor,
+                                    const SizedBox(width: 12),
+                                    // Purok name
+                                    Expanded(
+                                      flex: 3,
+                                      child: Text(
+                                        entry.key,
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w500,
+                                          color: Colors.grey[800],
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
                                       ),
                                     ),
-                                  ),
-                                ],
-                              ),
-                            );
-                          },
+                                    // Percentage
+                                    Expanded(
+                                      flex: 1,
+                                      child: Text(
+                                        '$percentage%',
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.bold,
+                                          color: color,
+                                        ),
+                                        textAlign: TextAlign.center,
+                                      ),
+                                    ),
+                                    // Weight
+                                    Expanded(
+                                      flex: 1,
+                                      child: Text(
+                                        '$weight kg',
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          color: textSecondaryColor,
+                                        ),
+                                        textAlign: TextAlign.center,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            },
+                          ),
                         ),
                       ),
                     ],
@@ -1587,22 +2149,54 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                     size: 20,
                   ),
                   const SizedBox(width: 8),
-                  Text(
-                    'Recent Collections',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: textPrimaryColor,
-                    ),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Recent Collections',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: textPrimaryColor,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        _selectedTimeFilter == 'Select Month' &&
+                                _selectedMonth != null
+                            ? 'Showing collections for ${DateFormat('MMMM yyyy').format(DateFormat('MMM yyyy').parse(_selectedMonth!))}'
+                            : 'Showing collections for $_selectedTimeFilter',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: textSecondaryColor.withOpacity(0.7),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
-              Text(
-                '${_recentCollections.length} Collections',
-                style: TextStyle(
-                  fontSize: 14,
-                  color: textSecondaryColor,
-                ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    '${_recentCollections.length} Collections',
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: textSecondaryColor,
+                    ),
+                  ),
+                  Text(
+                    _selectedTimeFilter == 'Select Month' &&
+                            _selectedMonth != null
+                        ? DateFormat('MMMM yyyy').format(
+                            DateFormat('MMM yyyy').parse(_selectedMonth!))
+                        : _selectedTimeFilter,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: textSecondaryColor.withOpacity(0.7),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -1610,83 +2204,243 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
           Container(
             constraints:
                 const BoxConstraints(maxHeight: 300), // Set maximum height
-            child: ListView.builder(
-              shrinkWrap: true,
-              physics:
-                  const AlwaysScrollableScrollPhysics(), // Make it scrollable
-              itemCount: _recentCollections.length,
-              itemBuilder: (context, index) {
-                final collection = _recentCollections[index];
-                return Container(
-                  margin: const EdgeInsets.only(bottom: 10),
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade50,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(
-                      color: Colors.grey.shade200,
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: _getWasteTypeColor(collection['wasteType'])
-                              .withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(8),
+            child: _recentCollections.isEmpty
+                ? Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.inbox_outlined,
+                          size: 48,
+                          color: Colors.grey.withOpacity(0.5),
                         ),
-                        child: Icon(
-                          _getWasteTypeIcon(collection['wasteType']),
-                          color: _getWasteTypeColor(collection['wasteType']),
-                          size: 18,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              collection['residentName'],
-                              style: const TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              '${collection['purok']} • ${DateFormat('MMM d, yyyy').format(collection['date'])}',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: textSecondaryColor,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: _getWasteTypeColor(collection['wasteType'])
-                              .withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Text(
-                          '${collection['weight'].toStringAsFixed(1)} kg',
+                        const SizedBox(height: 16),
+                        Text(
+                          'No collections found',
                           style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
-                            color: _getWasteTypeColor(collection['wasteType']),
+                            fontSize: 16,
+                            fontWeight: FontWeight.w500,
+                            color: textSecondaryColor,
                           ),
                         ),
-                      ),
-                    ],
+                        const SizedBox(height: 8),
+                        Text(
+                          'for the selected time period',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: textSecondaryColor.withOpacity(0.7),
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                : ListView.builder(
+                    shrinkWrap: true,
+                    physics:
+                        const AlwaysScrollableScrollPhysics(), // Make it scrollable
+                    itemCount: _recentCollections.length,
+                    itemBuilder: (context, index) {
+                      final collection = _recentCollections[index];
+                      // Determine border color based on warnings/penalties
+                      Color borderColor = Colors.grey.shade200;
+                      Color backgroundColor = Colors.grey.shade50;
+
+                      if (collection['hasPenalties'] == true) {
+                        borderColor = Colors.red.withOpacity(0.5);
+                        backgroundColor = Colors.red.withOpacity(0.05);
+                      } else if (collection['hasWarnings'] == true) {
+                        borderColor = Colors.orange.withOpacity(0.5);
+                        backgroundColor = Colors.orange.withOpacity(0.05);
+                      }
+
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 10),
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: backgroundColor,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: borderColor,
+                            width: collection['hasWarnings'] == true ||
+                                    collection['hasPenalties'] == true
+                                ? 2
+                                : 1,
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color:
+                                    _getWasteTypeColor(collection['wasteType'])
+                                        .withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Icon(
+                                _getWasteTypeIcon(collection['wasteType']),
+                                color:
+                                    _getWasteTypeColor(collection['wasteType']),
+                                size: 18,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          collection['residentName'],
+                                          style: const TextStyle(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ),
+                                      // Warning/Penalty indicator icon
+                                      if (collection['hasWarnings'] == true ||
+                                          collection['hasPenalties'] == true)
+                                        Container(
+                                          padding: const EdgeInsets.all(4),
+                                          decoration: BoxDecoration(
+                                            color: collection['hasPenalties'] ==
+                                                    true
+                                                ? Colors.red.withOpacity(0.1)
+                                                : Colors.orange
+                                                    .withOpacity(0.1),
+                                            borderRadius:
+                                                BorderRadius.circular(12),
+                                          ),
+                                          child: Icon(
+                                            collection['hasPenalties'] == true
+                                                ? Icons.block
+                                                : Icons.warning_amber_rounded,
+                                            color: collection['hasPenalties'] ==
+                                                    true
+                                                ? Colors.red
+                                                : Colors.orange,
+                                            size: 16,
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    '${collection['purok']} • ${DateFormat('MMM d, yyyy').format(collection['date'])}',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: textSecondaryColor,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            // Show warnings/penalties or weight based on scan type
+                            if (collection['hasWarnings'] == true ||
+                                collection['hasPenalties'] == true) ...[
+                              // Show warning/penalty indicators
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  if (collection['hasWarnings'] == true)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 8, vertical: 4),
+                                      decoration: BoxDecoration(
+                                        color: Colors.orange.withOpacity(0.1),
+                                        borderRadius: BorderRadius.circular(6),
+                                        border: Border.all(
+                                          color: Colors.orange.withOpacity(0.3),
+                                          width: 1,
+                                        ),
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(
+                                            Icons.warning_amber_rounded,
+                                            color: Colors.orange,
+                                            size: 14,
+                                          ),
+                                          const SizedBox(width: 4),
+                                          Text(
+                                            'Warning',
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.bold,
+                                              color: Colors.orange,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  if (collection['hasWarnings'] == true &&
+                                      collection['hasPenalties'] == true)
+                                    const SizedBox(width: 8),
+                                  if (collection['hasPenalties'] == true)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 8, vertical: 4),
+                                      decoration: BoxDecoration(
+                                        color: Colors.red.withOpacity(0.1),
+                                        borderRadius: BorderRadius.circular(6),
+                                        border: Border.all(
+                                          color: Colors.red.withOpacity(0.3),
+                                          width: 1,
+                                        ),
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(
+                                            Icons.block,
+                                            color: Colors.red,
+                                            size: 14,
+                                          ),
+                                          const SizedBox(width: 4),
+                                          Text(
+                                            'Penalty',
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.bold,
+                                              color: Colors.red,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ] else ...[
+                              // Show weight for normal scans
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: _getWasteTypeColor(
+                                          collection['wasteType'])
+                                      .withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Text(
+                                  '${collection['weight'].toStringAsFixed(1)} kg',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.bold,
+                                    color: _getWasteTypeColor(
+                                        collection['wasteType']),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      );
+                    },
                   ),
-                );
-              },
-            ),
           ),
         ],
       ),
@@ -1747,6 +2501,19 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
       return 'Non-Biodegradable';
     if (lowerCase.contains('recycl')) return 'Recyclables';
     return 'General Waste';
+  }
+
+  String _getWarningPenaltyText(Map<String, dynamic> collection) {
+    List<String> details = [];
+
+    if (collection['hasWarnings'] == true) {
+      details.add('Warning');
+    }
+    if (collection['hasPenalties'] == true) {
+      details.add('Penalty');
+    }
+
+    return details.join(', ');
   }
 
   Future<void> _generateAnalyticsReport() async {
@@ -1922,6 +2689,12 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
   }
 
   pw.Widget _buildPdfSummaryTable() {
+    // Calculate warning and penalty counts
+    int totalWarnings =
+        _recentCollections.where((c) => c['hasWarnings'] == true).length;
+    int totalPenalties =
+        _recentCollections.where((c) => c['hasPenalties'] == true).length;
+
     return pw.Table(
       border: pw.TableBorder.all(),
       children: [
@@ -1971,13 +2744,23 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
           children: [
             pw.Padding(
               padding: const pw.EdgeInsets.all(8),
-              child: pw.Text('Average per Collection'),
+              child: pw.Text('Total Warnings'),
             ),
             pw.Padding(
               padding: const pw.EdgeInsets.all(8),
-              child: pw.Text(
-                '${(_totalWasteCollected / (_totalCollections == 0 ? 1 : _totalCollections)).toStringAsFixed(1)} kg',
-              ),
+              child: pw.Text('$totalWarnings'),
+            ),
+          ],
+        ),
+        pw.TableRow(
+          children: [
+            pw.Padding(
+              padding: const pw.EdgeInsets.all(8),
+              child: pw.Text('Total Penalties'),
+            ),
+            pw.Padding(
+              padding: const pw.EdgeInsets.all(8),
+              child: pw.Text('$totalPenalties'),
             ),
           ],
         ),
@@ -2022,7 +2805,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
             pw.Padding(
               padding: const pw.EdgeInsets.all(8),
               child: pw.Text(
-                'Weight',
+                'Details',
                 style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
               ),
             ),
@@ -2050,8 +2833,12 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                 ),
                 pw.Padding(
                   padding: const pw.EdgeInsets.all(8),
-                  child:
-                      pw.Text('${collection['weight'].toStringAsFixed(1)} kg'),
+                  child: pw.Text(
+                    collection['hasWarnings'] == true ||
+                            collection['hasPenalties'] == true
+                        ? _getWarningPenaltyText(collection)
+                        : '${collection['weight'].toStringAsFixed(1)} kg',
+                  ),
                 ),
               ],
             )),

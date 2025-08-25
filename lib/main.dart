@@ -67,6 +67,20 @@ void main() async {
         event.notification.display();
       });
 
+      // NEW: Handle notifications when app is opened from background/closed state
+      OneSignal.Notifications.addClickListener((event) {
+        print('Notification clicked: ${event.notification.title}');
+        print('Notification data: ${event.notification.additionalData}');
+
+        // Handle navigation based on notification type
+        _handleNotificationClick(event.notification);
+      });
+
+      // NEW: Handle notifications received when app is in background
+      OneSignal.Notifications.addPermissionObserver((state) {
+        print('Notification permission changed: $state');
+      });
+
       // Start schedule notification service
       ScheduleNotificationService.startScheduleNotificationCheck();
 
@@ -137,6 +151,38 @@ void main() async {
 
   // Run the app
   runApp(const MyApp());
+}
+
+// NEW: Handle notification clicks and navigate accordingly
+void _handleNotificationClick(OSNotification notification) {
+  final data = notification.additionalData;
+
+  if (data != null) {
+    final type = data['type'];
+
+    switch (type) {
+      case 'scheduled_collection':
+        // Navigate to schedule screen
+        print('Navigating to schedule screen for collection notification');
+        // You can implement navigation logic here
+        break;
+      case 'daily_schedule':
+        // Navigate to schedule screen for daily schedule
+        print('Navigating to schedule screen for daily schedule notification');
+        break;
+      case 'upcoming_collection':
+        // Navigate to schedule screen for upcoming collection
+        print(
+            'Navigating to schedule screen for upcoming collection notification');
+        break;
+      case 'announcement':
+        // Navigate to announcement screen
+        print('Navigating to announcement screen');
+        break;
+      default:
+        print('Unknown notification type: $type');
+    }
+  }
 }
 
 class MyApp extends StatelessWidget {
