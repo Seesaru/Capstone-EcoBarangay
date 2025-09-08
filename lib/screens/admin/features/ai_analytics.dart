@@ -21,7 +21,25 @@ class AIAnalyticsService {
   bool isAnalyzing = false;
   String? analysisError;
 
-  Future<Map<String, dynamic>> generateAIAnalysis() async {
+  // Cache management
+  DateTime? _lastAnalysisTime;
+  String? _lastDataHash;
+  bool _hasCachedResults = false;
+  static const Duration _cacheValidityDuration = Duration(hours: 24); // Cache for 24 hours
+
+  Future<Map<String, dynamic>> generateAIAnalysis({bool forceRefresh = false}) async {
+    // Check if we have valid cached results and don't need to force refresh
+    if (!forceRefresh && _hasCachedResults && _isCacheValid()) {
+      print('Using cached AI analysis results from ${_lastAnalysisTime}');
+      return {
+        'recommendations': aiRecommendations,
+        'predictions': aiPredictions,
+        'insights': aiInsights,
+        'success': true,
+        'cached': true,
+      };
+    }
+
     isAnalyzing = true;
     analysisError = null;
 
@@ -29,17 +47,39 @@ class AIAnalyticsService {
       // Fetch fresh data from Firestore
       await _fetchLatestDataFromFirestore();
 
+      // Check if data has significantly changed
+      final currentDataHash = _generateDataHash();
+      if (!forceRefresh && _hasCachedResults && currentDataHash == _lastDataHash) {
+        print('Data unchanged, using cached results');
+        isAnalyzing = false;
+        return {
+          'recommendations': aiRecommendations,
+          'predictions': aiPredictions,
+          'insights': aiInsights,
+          'success': true,
+          'cached': true,
+        };
+      }
+
       final analysisData = _prepareAnalysisData();
 
       aiRecommendations = await _generateRecommendations(analysisData);
       aiPredictions = await _generatePredictions(analysisData);
       aiInsights = await _generateInsights(analysisData);
 
+      // Update cache
+      _lastAnalysisTime = DateTime.now();
+      _lastDataHash = currentDataHash;
+      _hasCachedResults = true;
+
+      print('AI analysis completed and cached at $_lastAnalysisTime');
+
       return {
         'recommendations': aiRecommendations,
         'predictions': aiPredictions,
         'insights': aiInsights,
         'success': true,
+        'cached': false,
       };
     } catch (e) {
       analysisError = e.toString();
@@ -47,6 +87,63 @@ class AIAnalyticsService {
     } finally {
       isAnalyzing = false;
     }
+  }
+
+  // Check if cache is still valid
+  bool _isCacheValid() {
+    if (_lastAnalysisTime == null) return false;
+    final timeSinceLastAnalysis = DateTime.now().difference(_lastAnalysisTime!);
+    return timeSinceLastAnalysis < _cacheValidityDuration;
+  }
+
+  // Generate a hash of the current data to detect changes
+  String _generateDataHash() {
+    final dataString = jsonEncode({
+      'totalWasteCollected': totalWasteCollected,
+      'totalCollections': totalCollections,
+      'wasteTypeData': wasteTypeData,
+      'monthlyCollectionData': monthlyCollectionData,
+      'purokCollectionData': purokCollectionData,
+      'recentCollectionsCount': recentCollections.length,
+    });
+    return dataString.hashCode.toString();
+  }
+
+  // Force refresh the analysis (clears cache)
+  Future<Map<String, dynamic>> forceRefreshAnalysis() async {
+    _hasCachedResults = false;
+    _lastAnalysisTime = null;
+    _lastDataHash = null;
+    return generateAIAnalysis(forceRefresh: true);
+  }
+
+  // Check if we have cached results
+  bool get hasCachedResults => _hasCachedResults && _isCacheValid();
+
+  // Get cache status information
+  Map<String, dynamic> getCacheStatus() {
+    if (!_hasCachedResults) {
+      return {
+        'hasCache': false,
+        'message': 'No cached results available',
+      };
+    }
+
+    if (!_isCacheValid()) {
+      return {
+        'hasCache': false,
+        'message': 'Cache expired',
+        'lastAnalysis': _lastAnalysisTime,
+      };
+    }
+
+    final timeSinceLastAnalysis = DateTime.now().difference(_lastAnalysisTime!);
+    return {
+      'hasCache': true,
+      'lastAnalysis': _lastAnalysisTime,
+      'timeSinceLastAnalysis': timeSinceLastAnalysis,
+      'cacheAge': '${timeSinceLastAnalysis.inHours}h ${timeSinceLastAnalysis.inMinutes % 60}m ago',
+    };
   }
 
   Future<void> _fetchLatestDataFromFirestore() async {

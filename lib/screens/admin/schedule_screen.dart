@@ -28,15 +28,31 @@ class _AdminSchedules extends State<AdminSchedules> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   String _adminBarangay = '';
-  bool _isLoading = true;
 
-  // Filter options
-  String? _selectedWasteType;
+  // Quick filter toggles (like penalty list)
+  bool _showGeneral = true;
+  bool _showBiodegradable = true;
+  bool _showNonBiodegradable = true;
+  bool _showRecyclable = true;
+
+  // Status filter dropdown
   String? _selectedStatus;
-  DateTime? _selectedDate;
 
   // Add new variables for month filter
   DateTime? _selectedMonthYear;
+
+  // Time period filter (match reports/announcement design)
+  String _selectedTimeFilter = 'This Week';
+  String? _selectedCustomDate; // e.g., 'Jul 15, 2025 - Jul 20, 2025'
+  DateTime? _customStartDate;
+  DateTime? _customEndDate;
+  final List<String> _timeFilters = [
+    'This Week',
+    'This Month',
+    'This Year',
+    'All Time',
+    'Custom',
+  ];
 
   // Add getter for available months
   Future<List<DateTime>> _getAvailableMonths() async {
@@ -80,6 +96,48 @@ class _AdminSchedules extends State<AdminSchedules> {
     return sortedGrouped;
   }
 
+  // Filter schedules by date based on selected time filter
+  bool _isInSelectedDateRange(DateTime date) {
+    final DateTime now = DateTime.now();
+    final DateTime today = DateTime(now.year, now.month, now.day);
+
+    if (_selectedTimeFilter == 'Custom' &&
+        _customStartDate != null &&
+        _customEndDate != null) {
+      final DateTime start = DateTime(_customStartDate!.year,
+          _customStartDate!.month, _customStartDate!.day);
+      final DateTime end = DateTime(_customEndDate!.year, _customEndDate!.month,
+          _customEndDate!.day, 23, 59, 59);
+      return date.isAfter(start.subtract(const Duration(seconds: 1))) &&
+          date.isBefore(end.add(const Duration(seconds: 1)));
+    }
+
+    switch (_selectedTimeFilter) {
+      case 'This Week':
+        final DateTime startOfWeek =
+            today.subtract(Duration(days: today.weekday - 1));
+        final DateTime endOfWeek =
+            DateTime(today.year, today.month, today.day, 23, 59, 59);
+        return date.isAfter(startOfWeek.subtract(const Duration(seconds: 1))) &&
+            date.isBefore(endOfWeek.add(const Duration(seconds: 1)));
+      case 'This Month':
+        final DateTime startOfMonth = DateTime(today.year, today.month, 1);
+        final DateTime endOfMonth =
+            DateTime(today.year, today.month + 1, 0, 23, 59, 59);
+        return date
+                .isAfter(startOfMonth.subtract(const Duration(seconds: 1))) &&
+            date.isBefore(endOfMonth.add(const Duration(seconds: 1)));
+      case 'This Year':
+        final DateTime startOfYear = DateTime(today.year, 1, 1);
+        final DateTime endOfYear = DateTime(today.year, 12, 31, 23, 59, 59);
+        return date.isAfter(startOfYear.subtract(const Duration(seconds: 1))) &&
+            date.isBefore(endOfYear.add(const Duration(seconds: 1)));
+      case 'All Time':
+      default:
+        return true;
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -101,23 +159,16 @@ class _AdminSchedules extends State<AdminSchedules> {
               adminDoc.data() as Map<String, dynamic>;
           setState(() {
             _adminBarangay = adminData['barangay'] ?? '';
-            _isLoading = false;
           });
         } else {
-          setState(() {
-            _isLoading = false;
-          });
+          setState(() {});
         }
       } else {
-        setState(() {
-          _isLoading = false;
-        });
+        setState(() {});
       }
     } catch (e) {
       print('Error fetching admin barangay: ${e.toString()}');
-      setState(() {
-        _isLoading = false;
-      });
+      setState(() {});
     }
   }
 
@@ -205,272 +256,391 @@ class _AdminSchedules extends State<AdminSchedules> {
                     ),
                   ],
                 ),
-                ElevatedButton.icon(
-                  onPressed: () {
-                    if (widget.onAddSchedulePressed != null) {
-                      widget.onAddSchedulePressed!();
-                    } else {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (context) => const AddScheduleScreen(),
+                Row(
+                  children: [
+                    // Time Period Filter
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 12),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.grey.withOpacity(0.1),
+                            spreadRadius: 1,
+                            blurRadius: 4,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.calendar_month,
+                              color: Color(0xFF4CAF50), size: 20),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Time Period',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.grey.shade800,
+                            ),
+                          ),
+                          const SizedBox(width: 24),
+                          DropdownButton<String>(
+                            value: _selectedTimeFilter,
+                            items: _timeFilters.map((String value) {
+                              return DropdownMenuItem<String>(
+                                value: value,
+                                child: Text(
+                                  value,
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w500,
+                                    color: Colors.grey.shade800,
+                                  ),
+                                ),
+                              );
+                            }).toList(),
+                            onChanged: (String? newValue) async {
+                              if (newValue == null) return;
+                              if (newValue == 'Custom') {
+                                // Show custom date range picker as floating card
+                                await showDialog<DateTimeRange>(
+                                  context: context,
+                                  builder: (context) => Dialog(
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(16),
+                                    ),
+                                    child: Container(
+                                      width: 400,
+                                      padding: const EdgeInsets.all(24),
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Row(
+                                            children: [
+                                              Icon(Icons.date_range,
+                                                  color: accentColor, size: 24),
+                                              const SizedBox(width: 12),
+                                              Text(
+                                                'Select Date Range',
+                                                style: TextStyle(
+                                                  fontSize: 18,
+                                                  fontWeight: FontWeight.bold,
+                                                  color: Colors.grey.shade800,
+                                                ),
+                                              ),
+                                              const Spacer(),
+                                              IconButton(
+                                                icon: const Icon(Icons.close),
+                                                onPressed: () =>
+                                                    Navigator.of(context).pop(),
+                                              ),
+                                            ],
+                                          ),
+                                          const SizedBox(height: 20),
+                                          SizedBox(
+                                            height: 300,
+                                            child: CalendarDatePicker(
+                                              initialDate: _customStartDate ??
+                                                  DateTime.now(),
+                                              firstDate: DateTime.now()
+                                                  .subtract(const Duration(
+                                                      days: 365)),
+                                              lastDate: DateTime.now().add(
+                                                  const Duration(days: 365)),
+                                              onDateChanged: (date) {
+                                                // For simplicity, we'll use a single date picker
+                                                // You can enhance this to select a range
+                                                setState(() {
+                                                  _selectedTimeFilter =
+                                                      'Custom';
+                                                  _customStartDate = date;
+                                                  _customEndDate = date;
+                                                  _selectedCustomDate =
+                                                      DateFormat('MMM dd, yyyy')
+                                                          .format(date);
+                                                });
+                                                Navigator.of(context).pop();
+                                              },
+                                            ),
+                                          ),
+                                          const SizedBox(height: 16),
+                                          Row(
+                                            children: [
+                                              Expanded(
+                                                child: TextButton(
+                                                  onPressed: () =>
+                                                      Navigator.of(context)
+                                                          .pop(),
+                                                  child: const Text('Cancel'),
+                                                ),
+                                              ),
+                                              const SizedBox(width: 12),
+                                              Expanded(
+                                                child: ElevatedButton(
+                                                  onPressed: () {
+                                                    if (_customStartDate !=
+                                                        null) {
+                                                      Navigator.of(context)
+                                                          .pop();
+                                                    }
+                                                  },
+                                                  style:
+                                                      ElevatedButton.styleFrom(
+                                                    backgroundColor:
+                                                        accentColor,
+                                                    foregroundColor:
+                                                        Colors.white,
+                                                  ),
+                                                  child: const Text('Apply'),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              } else {
+                                setState(() {
+                                  _selectedTimeFilter = newValue;
+                                  _selectedCustomDate = null;
+                                  _customStartDate = null;
+                                  _customEndDate = null;
+                                });
+                              }
+                            },
+                            underline: const SizedBox(),
+                            icon: const Icon(Icons.arrow_drop_down,
+                                color: Color(0xFF4CAF50)),
+                            dropdownColor: Colors.white,
+                            isDense: true,
+                          ),
+                          if (_selectedTimeFilter == 'Custom' &&
+                              _selectedCustomDate != null) ...[
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 6),
+                              decoration: BoxDecoration(
+                                color:
+                                    const Color(0xFF4CAF50).withOpacity(0.15),
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.date_range,
+                                      color: Color(0xFF4CAF50), size: 18),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    _selectedCustomDate!,
+                                    style: const TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w500,
+                                      color: Color(0xFF4CAF50),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    ElevatedButton.icon(
+                      onPressed: () {
+                        if (widget.onAddSchedulePressed != null) {
+                          widget.onAddSchedulePressed!();
+                        } else {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (context) => const AddScheduleScreen(),
+                            ),
+                          );
+                        }
+                      },
+                      icon: const Icon(Icons.add),
+                      label: const Text('Add Schedule'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: accentColor,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 20,
+                          vertical: 12,
                         ),
-                      );
-                    }
-                  },
-                  icon: const Icon(Icons.add),
-                  label: const Text('Add Schedule'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: accentColor,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 20,
-                      vertical: 12,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
                     ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
+                  ],
                 ),
               ],
             ),
 
             const SizedBox(height: 24),
 
-            // Filter section
+            // Quick Filters Section (like penalty list)
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              margin: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+              padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: cardColor,
-                borderRadius: BorderRadius.circular(8),
+                color: Colors.white,
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.grey.shade300,
-                    blurRadius: 5,
+                    color: Colors.grey.withOpacity(0.1),
+                    spreadRadius: 1,
+                    blurRadius: 3,
                     offset: const Offset(0, 2),
                   ),
                 ],
               ),
               child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  const SizedBox(height: 12),
+
+                  // Top controls row: waste type filters (left) + status dropdown (right)
                   Row(
                     children: [
-                      // Month Filter
+                      // Waste type filters on the left
                       Expanded(
-                        flex: 2,
-                        child: Container(
-                          height: 45,
-                          padding: const EdgeInsets.symmetric(horizontal: 8),
-                          decoration: BoxDecoration(
-                            color: cardColor,
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: Colors.grey.shade300),
-                          ),
-                          child: StreamBuilder<List<DateTime>>(
-                            stream: Stream.fromFuture(_getAvailableMonths()),
-                            builder: (context, snapshot) {
-                              if (!snapshot.hasData) {
-                                return const Center(
-                                    child: CircularProgressIndicator());
-                              }
-
-                              List<DateTime> months = snapshot.data!;
-
-                              return DropdownButtonFormField<DateTime>(
-                                value: _selectedMonthYear,
-                                items: [
-                                  DropdownMenuItem<DateTime>(
-                                    value: null,
-                                    child: Text('All Months'),
-                                  ),
-                                  ...months.map((date) {
-                                    return DropdownMenuItem<DateTime>(
-                                      value: date,
-                                      child: Text(
-                                          DateFormat('MMMM yyyy').format(date)),
-                                    );
-                                  }).toList(),
-                                ],
-                                onChanged: (DateTime? value) {
-                                  setState(() => _selectedMonthYear = value);
-                                },
-                                decoration: InputDecoration(
-                                  border: InputBorder.none,
-                                  prefixIcon: Icon(Icons.calendar_month,
-                                      size: 16, color: Colors.grey.shade600),
-                                  hintText: 'Select Month',
-                                  hintStyle: TextStyle(
-                                      fontSize: 14,
-                                      color: Colors.grey.shade600),
-                                  contentPadding: EdgeInsets.zero,
-                                ),
-                                icon: Icon(Icons.arrow_drop_down,
-                                    color: Colors.grey.shade600),
-                                dropdownColor: cardColor,
-                                isDense: true,
-                              );
-                            },
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-
-                      // Existing Waste Type Filter
-                      Expanded(
-                        flex: 2,
-                        child: Container(
-                          height: 45,
-                          padding: const EdgeInsets.symmetric(horizontal: 8),
-                          decoration: BoxDecoration(
-                            color: cardColor,
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: Colors.grey.shade300),
-                          ),
-                          child: DropdownButtonFormField<String>(
-                            value: _selectedWasteType,
-                            items: [
-                              'All',
-                              'General',
-                              'Biodegradable',
-                              'Non-biodegradable',
-                            ].map((String value) {
-                              return DropdownMenuItem<String>(
-                                value: value == 'All' ? null : value,
-                                child: Text(value),
-                              );
-                            }).toList(),
-                            onChanged: (String? value) {
-                              setState(() => _selectedWasteType = value);
-                            },
-                            decoration: InputDecoration(
-                              border: InputBorder.none,
-                              prefixIcon: Icon(Icons.recycling,
-                                  size: 16, color: Colors.grey.shade600),
-                              hintText: 'Waste Type',
-                              hintStyle: TextStyle(
-                                  fontSize: 14, color: Colors.grey.shade600),
-                              contentPadding: EdgeInsets.zero,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Waste Type Filters:',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.grey.shade700,
+                              ),
                             ),
-                            icon: Icon(Icons.arrow_drop_down,
-                                color: Colors.grey.shade600),
-                            dropdownColor: cardColor,
-                            isDense: true,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-
-                      // Status Filter
-                      Expanded(
-                        flex: 2,
-                        child: Container(
-                          height: 45,
-                          padding: const EdgeInsets.symmetric(horizontal: 8),
-                          decoration: BoxDecoration(
-                            color: cardColor,
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: Colors.grey.shade300),
-                          ),
-                          child: DropdownButtonFormField<String>(
-                            value: _selectedStatus,
-                            items: [
-                              'All',
-                              'Scheduled',
-                              'Completed',
-                              'Cancelled'
-                            ].map((String value) {
-                              return DropdownMenuItem<String>(
-                                value: value == 'All' ? null : value,
-                                child: Text(value),
-                              );
-                            }).toList(),
-                            onChanged: (String? value) {
-                              setState(() => _selectedStatus = value);
-                            },
-                            decoration: InputDecoration(
-                              border: InputBorder.none,
-                              prefixIcon: Icon(Icons.flag,
-                                  size: 16, color: Colors.grey.shade600),
-                              hintText: 'Status',
-                              hintStyle: TextStyle(
-                                  fontSize: 14, color: Colors.grey.shade600),
-                              contentPadding: EdgeInsets.zero,
-                            ),
-                            icon: Icon(Icons.arrow_drop_down,
-                                color: Colors.grey.shade600),
-                            dropdownColor: cardColor,
-                            isDense: true,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-
-                      // Date Filter
-                      Expanded(
-                        flex: 2,
-                        child: GestureDetector(
-                          onTap: () async {
-                            final DateTime? picked = await showDatePicker(
-                              context: context,
-                              initialDate: _selectedDate ?? DateTime.now(),
-                              firstDate: DateTime.now()
-                                  .subtract(const Duration(days: 365)),
-                              lastDate:
-                                  DateTime.now().add(const Duration(days: 365)),
-                              builder: (context, child) {
-                                return Theme(
-                                  data: Theme.of(context).copyWith(
-                                    colorScheme:
-                                        ColorScheme.light(primary: accentColor),
-                                  ),
-                                  child: child!,
-                                );
-                              },
-                            );
-                            if (picked != null) {
-                              setState(() {
-                                _selectedDate = picked;
-                              });
-                            }
-                          },
-                          child: Container(
-                            height: 45,
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
-                            decoration: BoxDecoration(
-                              color: cardColor,
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(color: Colors.grey.shade300),
-                            ),
-                            child: Row(
+                            const SizedBox(height: 8),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 6,
                               children: [
-                                Icon(Icons.calendar_today,
-                                    size: 16, color: Colors.grey.shade600),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    _selectedDate == null
-                                        ? 'Collection Date'
-                                        : DateFormat('MMM dd, yyyy')
-                                            .format(_selectedDate!),
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      color: _selectedDate == null
-                                          ? Colors.grey.shade600
-                                          : textColor,
-                                    ),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
+                                _buildFilterChip(
+                                  'General',
+                                  _showGeneral,
+                                  (val) {
+                                    setState(() => _showGeneral = val!);
+                                    _applyQuickFilters();
+                                  },
+                                  Colors.blue,
+                                  Icons.delete_sweep,
                                 ),
-                                if (_selectedDate != null)
-                                  IconButton(
-                                    icon: Icon(Icons.close,
-                                        size: 16, color: Colors.grey.shade600),
-                                    onPressed: () => setState(() {
-                                      _selectedDate = null;
-                                    }),
-                                    splashRadius: 20,
-                                  ),
+                                _buildFilterChip(
+                                  'Biodegradable',
+                                  _showBiodegradable,
+                                  (val) {
+                                    setState(() => _showBiodegradable = val!);
+                                    _applyQuickFilters();
+                                  },
+                                  Colors.green,
+                                  Icons.compost,
+                                ),
+                                _buildFilterChip(
+                                  'Non-biodegradable',
+                                  _showNonBiodegradable,
+                                  (val) {
+                                    setState(
+                                        () => _showNonBiodegradable = val!);
+                                    _applyQuickFilters();
+                                  },
+                                  Colors.orange,
+                                  Icons.delete,
+                                ),
+                                _buildFilterChip(
+                                  'Recyclable',
+                                  _showRecyclable,
+                                  (val) {
+                                    setState(() => _showRecyclable = val!);
+                                    _applyQuickFilters();
+                                  },
+                                  Colors.teal,
+                                  Icons.recycling,
+                                ),
                               ],
                             ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      // Status dropdown on the right
+                      Container(
+                        height: 35,
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.grey.shade300),
+                        ),
+                        child: DropdownButtonHideUnderline(
+                          child: DropdownButton<String>(
+                            value: _selectedStatus,
+                            items: [
+                              DropdownMenuItem<String>(
+                                value: null,
+                                child: Text(
+                                  'All Status',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.grey.shade600,
+                                  ),
+                                ),
+                              ),
+                              DropdownMenuItem<String>(
+                                value: 'Scheduled',
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.schedule,
+                                        size: 16, color: Colors.blue),
+                                    const SizedBox(width: 8),
+                                    Text('Scheduled'),
+                                  ],
+                                ),
+                              ),
+                              DropdownMenuItem<String>(
+                                value: 'Completed',
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.check_circle,
+                                        size: 16, color: Colors.green),
+                                    const SizedBox(width: 8),
+                                    Text('Completed'),
+                                  ],
+                                ),
+                              ),
+                              DropdownMenuItem<String>(
+                                value: 'Cancelled',
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.cancel,
+                                        size: 16, color: Colors.red),
+                                    const SizedBox(width: 8),
+                                    Text('Cancelled'),
+                                  ],
+                                ),
+                              ),
+                            ],
+                            onChanged: (String? value) {
+                              setState(() => _selectedStatus = value);
+                              _applyQuickFilters();
+                            },
+                            icon: Icon(Icons.arrow_drop_down,
+                                color: Colors.grey.shade600, size: 20),
+                            isDense: true,
                           ),
                         ),
                       ),
@@ -482,82 +652,76 @@ class _AdminSchedules extends State<AdminSchedules> {
 
             const SizedBox(height: 24),
 
-            // Replace static statistics with StreamBuilder
-            StreamBuilder<List<WasteCollectionSchedule>>(
-                stream: _getSchedulesStream(),
-                builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.waiting) {
-                    return Row(
-                      children: List.generate(
-                          3,
-                          (index) => Expanded(
-                                child: Container(
-                                  height: 80,
-                                  margin: EdgeInsets.only(
-                                      right: index < 2 ? 16 : 0),
-                                  decoration: BoxDecoration(
-                                    color: cardColor,
-                                    borderRadius: BorderRadius.circular(8),
+            // Statistics section with same margin as filter section
+            Container(
+              margin: const EdgeInsets.fromLTRB(12, 0, 12, 0),
+              child: StreamBuilder<List<WasteCollectionSchedule>>(
+                  stream: _getSchedulesStream(),
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return Row(
+                        children: List.generate(
+                            3,
+                            (index) => Expanded(
+                                  child: Container(
+                                    height: 80,
+                                    margin: EdgeInsets.only(
+                                        right: index < 2 ? 16 : 0),
+                                    decoration: BoxDecoration(
+                                      color: cardColor,
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Center(
+                                        child: CircularProgressIndicator()),
                                   ),
-                                  child: Center(
-                                      child: CircularProgressIndicator()),
-                                ),
-                              )),
+                                )),
+                      );
+                    }
+
+                    if (snapshot.hasError) {
+                      return Center(child: Text('Error: ${snapshot.error}'));
+                    }
+
+                    List<WasteCollectionSchedule> schedules =
+                        snapshot.data ?? [];
+                    List<WasteCollectionSchedule> filteredSchedules =
+                        _filterSchedules(schedules);
+
+                    return Row(
+                      children: [
+                        _buildStatCard(
+                          title: 'Total Schedules',
+                          value: filteredSchedules.length.toString(),
+                          icon: Icons.event,
+                          color: Colors.blue,
+                        ),
+                        const SizedBox(width: 16),
+                        _buildStatCard(
+                          title: _selectedTimeFilter == 'Custom' &&
+                                  _selectedCustomDate != null
+                              ? 'Custom Range'
+                              : _selectedTimeFilter,
+                          value: filteredSchedules
+                              .where((s) => _isInSelectedDateRange(s.date))
+                              .length
+                              .toString(),
+                          icon: Icons.date_range,
+                          color: Colors.orange,
+                        ),
+                        const SizedBox(width: 16),
+                        _buildStatCard(
+                          title: 'Completed',
+                          value: filteredSchedules
+                              .where((s) => s.status == 'Completed')
+                              .length
+                              .toString(),
+                          icon: Icons.task_alt,
+                          color: Colors.green,
+                        ),
+                      ],
                     );
-                  }
-
-                  if (snapshot.hasError) {
-                    return Center(child: Text('Error: ${snapshot.error}'));
-                  }
-
-                  List<WasteCollectionSchedule> schedules = snapshot.data ?? [];
-
-                  // Get the current date with time set to midnight for accurate comparison
-                  final now = DateTime.now();
-                  final today = DateTime(now.year, now.month, now.day);
-                  final endOfWeek = today.add(const Duration(days: 7));
-
-                  return Row(
-                    children: [
-                      _buildStatCard(
-                        title: 'Total Schedules',
-                        value: schedules.length.toString(),
-                        icon: Icons.event,
-                        color: Colors.blue,
-                      ),
-                      const SizedBox(width: 16),
-                      _buildStatCard(
-                        title: 'This Week',
-                        value: schedules
-                            .where((s) {
-                              // Convert schedule date to midnight for proper comparison
-                              final scheduleDate = DateTime(
-                                s.date.year,
-                                s.date.month,
-                                s.date.day,
-                              );
-                              return scheduleDate.isAfter(today
-                                      .subtract(const Duration(days: 1))) &&
-                                  scheduleDate.isBefore(endOfWeek);
-                            })
-                            .length
-                            .toString(),
-                        icon: Icons.date_range,
-                        color: Colors.orange,
-                      ),
-                      const SizedBox(width: 16),
-                      _buildStatCard(
-                        title: 'Completed',
-                        value: schedules
-                            .where((s) => s.status == 'Completed')
-                            .length
-                            .toString(),
-                        icon: Icons.task_alt,
-                        color: Colors.green,
-                      ),
-                    ],
-                  );
-                }),
+                  }),
+            ),
 
             const SizedBox(height: 24),
 
@@ -686,6 +850,34 @@ class _AdminSchedules extends State<AdminSchedules> {
     );
   }
 
+  Widget _buildFilterChip(String label, bool value, Function(bool?) onChanged,
+      Color color, IconData icon) {
+    return FilterChip(
+      label: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16, color: value ? Colors.white : color),
+          const SizedBox(width: 4),
+          Text(label),
+        ],
+      ),
+      selected: value,
+      onSelected: onChanged,
+      selectedColor: color,
+      checkmarkColor: Colors.white,
+      labelStyle: TextStyle(
+        color: value ? Colors.white : color,
+        fontWeight: value ? FontWeight.bold : FontWeight.w500,
+        fontSize: 12,
+      ),
+      backgroundColor: Colors.white,
+      side: BorderSide(
+        color: value ? color : color.withOpacity(0.3),
+        width: value ? 2 : 1,
+      ),
+    );
+  }
+
   Widget _buildStatCard({
     required String title,
     required String value,
@@ -775,7 +967,7 @@ class _AdminSchedules extends State<AdminSchedules> {
     }
 
     // Status indicator color
-    Color statusColor = _getStatusColor(schedule.status);
+    _getStatusColor(schedule.status);
     bool isCompleted = schedule.status == 'Completed';
     bool isCancelled = schedule.status == 'Cancelled';
 
@@ -1231,9 +1423,20 @@ class _AdminSchedules extends State<AdminSchedules> {
     }
   }
 
+  void _applyQuickFilters() {
+    // This method will be called when quick filters change
+    // The actual filtering is done in the StreamBuilder
+    setState(() {});
+  }
+
   List<WasteCollectionSchedule> _filterSchedules(
       List<WasteCollectionSchedule> schedules) {
     return schedules.where((schedule) {
+      // Apply time period filter
+      if (!_isInSelectedDateRange(schedule.date)) {
+        return false;
+      }
+
       // Apply month filter
       if (_selectedMonthYear != null) {
         final scheduleDate = DateTime(schedule.date.year, schedule.date.month);
@@ -1244,33 +1447,31 @@ class _AdminSchedules extends State<AdminSchedules> {
         }
       }
 
-      // Apply waste type filter
-      if (_selectedWasteType != null &&
-          schedule.wasteType != _selectedWasteType) {
+      // Apply quick waste type filters
+      bool wasteTypeMatches = false;
+      switch (schedule.wasteType) {
+        case 'General':
+          wasteTypeMatches = _showGeneral;
+          break;
+        case 'Biodegradable':
+          wasteTypeMatches = _showBiodegradable;
+          break;
+        case 'Non-biodegradable':
+          wasteTypeMatches = _showNonBiodegradable;
+          break;
+        case 'Recyclable':
+          wasteTypeMatches = _showRecyclable;
+          break;
+        default:
+          wasteTypeMatches = _showGeneral; // Default to general
+      }
+      if (!wasteTypeMatches) {
         return false;
       }
 
-      // Apply status filter
+      // Apply status filter dropdown
       if (_selectedStatus != null && schedule.status != _selectedStatus) {
         return false;
-      }
-
-      // Apply specific date filter
-      if (_selectedDate != null) {
-        final scheduleDate = DateTime(
-          schedule.date.year,
-          schedule.date.month,
-          schedule.date.day,
-        );
-        final filterDate = DateTime(
-          _selectedDate!.year,
-          _selectedDate!.month,
-          _selectedDate!.day,
-        );
-
-        if (scheduleDate != filterDate) {
-          return false;
-        }
       }
 
       return true;

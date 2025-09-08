@@ -42,6 +42,8 @@ class _ResidentProfilePageState extends State<ResidentProfilePage> {
   bool _isLoading = true;
   bool _isSubmitting = false;
   Map<String, String> _barangayIdMap = {};
+  String? _selectedBarangay;
+  bool _isLoadingBarangays = true;
 
   // For page slider
   final PageController _pageController = PageController();
@@ -53,11 +55,14 @@ class _ResidentProfilePageState extends State<ResidentProfilePage> {
     super.initState();
     _loadBarangayData();
     _loadUserData();
+    // Setup listener to filter barangays as user types
+    _barangayController.addListener(_filterBarangays);
   }
 
   @override
   void dispose() {
     _nameController.dispose();
+    _barangayController.removeListener(_filterBarangays);
     _barangayController.dispose();
     _purokController.dispose();
     _contactController.dispose();
@@ -265,6 +270,7 @@ class _ResidentProfilePageState extends State<ResidentProfilePage> {
     try {
       setState(() {
         _isLoading = true;
+        _isLoadingBarangays = true;
       });
 
       // Get barangays directly from the barangays collection
@@ -308,10 +314,12 @@ class _ResidentProfilePageState extends State<ResidentProfilePage> {
         _filteredBarangays = List.from(_barangaySuggestions);
         _barangayIdMap = barangayIdMap; // Store the mapping
         _isLoading = false;
+        _isLoadingBarangays = false;
       });
     } catch (e) {
       setState(() {
         _isLoading = false;
+        _isLoadingBarangays = false;
         // Add some default barangays if there's an error
         _barangaySuggestions = ['Barangay 1', 'Barangay 2', 'Barangay 3'];
         _filteredBarangays = List.from(_barangaySuggestions);
@@ -338,6 +346,7 @@ class _ResidentProfilePageState extends State<ResidentProfilePage> {
           setState(() {
             _nameController.text = userData['fullName'] ?? '';
             _barangayController.text = userData['barangay'] ?? '';
+            _selectedBarangay = userData['barangay'];
             _purokController.text = userData['purok'] ?? '';
             _contactController.text = userData['contactNumber'] ?? '';
             _selectedGender = userData['gender'] ?? 'Male';
@@ -350,18 +359,22 @@ class _ResidentProfilePageState extends State<ResidentProfilePage> {
     }
   }
 
-  // Filter barangay suggestions based on input
-  void _filterBarangays(String query) {
-    setState(() {
-      if (query.isEmpty) {
+  // Filter barangays based on input text
+  void _filterBarangays() {
+    if (_barangayController.text.isEmpty) {
+      setState(() {
         _filteredBarangays = List.from(_barangaySuggestions);
-      } else {
+      });
+    } else {
+      setState(() {
         _filteredBarangays = _barangaySuggestions
-            .where((barangay) =>
-                barangay.toLowerCase().contains(query.toLowerCase()))
+            .where((barangay) => barangay
+                .toLowerCase()
+                .contains(_barangayController.text.toLowerCase()))
             .toList();
-      }
-    });
+        _selectedBarangay = _barangayController.text.trim();
+      });
+    }
   }
 
   // Save profile data
@@ -376,7 +389,7 @@ class _ResidentProfilePageState extends State<ResidentProfilePage> {
       if (currentUser != null) {
         // Get user information
         String fullName = _nameController.text.trim();
-        String barangay = _barangayController.text.trim();
+        String barangay = _selectedBarangay ?? _barangayController.text.trim();
         String purok = _purokController.text.trim();
         String contactNumber = _contactController.text.trim();
 
@@ -512,7 +525,8 @@ class _ResidentProfilePageState extends State<ResidentProfilePage> {
       case 0:
         return _nameController.text.isNotEmpty;
       case 1:
-        return _barangayController.text.isNotEmpty &&
+        return (_selectedBarangay != null ||
+                _barangayController.text.isNotEmpty) &&
             _purokController.text.isNotEmpty;
       case 2:
         return _contactController.text.isNotEmpty;
@@ -915,63 +929,8 @@ class _ResidentProfilePageState extends State<ResidentProfilePage> {
               ),
               const SizedBox(height: 40),
 
-              // Barangay with Suggestions
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildTextField(
-                    controller: _barangayController,
-                    labelText: 'Barangay',
-                    hintText: 'Select your barangay',
-                    prefixIcon: Icons.location_city_outlined,
-                    primaryColor: primaryColor,
-                    onChanged: (value) {
-                      _filterBarangays(value);
-                    },
-                  ),
-                  if (_filteredBarangays.isNotEmpty &&
-                      _barangayController.text.isNotEmpty)
-                    Container(
-                      margin: const EdgeInsets.only(top: 4),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(15),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.05),
-                            blurRadius: 10,
-                            spreadRadius: 0,
-                          ),
-                        ],
-                        border: Border.all(color: Colors.grey[300]!, width: 1),
-                      ),
-                      constraints: const BoxConstraints(maxHeight: 200),
-                      child: ListView.builder(
-                        shrinkWrap: true,
-                        itemCount: _filteredBarangays.length,
-                        itemBuilder: (context, index) {
-                          return ListTile(
-                            title: Text(
-                              _filteredBarangays[index],
-                              style: const TextStyle(fontSize: 16),
-                            ),
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 20,
-                              vertical: 8,
-                            ),
-                            onTap: () {
-                              setState(() {
-                                _barangayController.text =
-                                    _filteredBarangays[index];
-                                _filteredBarangays = [];
-                              });
-                            },
-                          );
-                        },
-                      ),
-                    ),
-                ],
-              ),
+              // Barangay Dropdown
+              _buildBarangayDropdown(primaryColor),
               const SizedBox(height: 24),
 
               // Purok
@@ -1280,6 +1239,238 @@ class _ResidentProfilePageState extends State<ResidentProfilePage> {
           ),
         ],
       ),
+    );
+  }
+
+  // Build barangay dropdown field
+  Widget _buildBarangayDropdown(Color primaryColor) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Barangay',
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+            color: primaryColor,
+          ),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _barangayController,
+          readOnly: true,
+          onTap: () => _showBarangaySelector(context),
+          decoration: InputDecoration(
+            filled: true,
+            fillColor: Colors.white,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(15),
+              borderSide: BorderSide.none,
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(15),
+              borderSide: BorderSide(color: primaryColor, width: 2),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(15),
+              borderSide: BorderSide(color: Colors.grey[300]!, width: 1),
+            ),
+            prefixIcon: Icon(Icons.location_city_outlined, color: primaryColor),
+            hintText: 'Select your barangay',
+            suffixIcon: Container(
+              margin: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: primaryColor.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(
+                Icons.arrow_drop_down,
+                color: primaryColor,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: Text(
+            'Select the barangay where you are registered',
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.grey[600],
+              fontStyle: FontStyle.italic,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // Show barangay selector modal
+  void _showBarangaySelector(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return Container(
+              height: MediaQuery.of(context).size.height * 0.7,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius:
+                    const BorderRadius.vertical(top: Radius.circular(25)),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.2),
+                    blurRadius: 10,
+                    spreadRadius: 5,
+                  ),
+                ],
+              ),
+              child: Column(
+                children: [
+                  Container(
+                    margin: const EdgeInsets.only(top: 12),
+                    height: 4,
+                    width: 40,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[300],
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 20),
+                    child: Column(
+                      children: [
+                        const Text(
+                          'Select Barangay',
+                          style: TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF0E6B6F),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Choose your registered barangay',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 20, vertical: 10),
+                    child: TextField(
+                      onChanged: (value) {
+                        setState(() {
+                          _filteredBarangays = _barangaySuggestions
+                              .where((barangay) => barangay
+                                  .toLowerCase()
+                                  .contains(value.toLowerCase()))
+                              .toList();
+                        });
+                      },
+                      decoration: InputDecoration(
+                        hintText: 'Search barangay...',
+                        prefixIcon:
+                            const Icon(Icons.search, color: Color(0xFF0E6B6F)),
+                        filled: true,
+                        fillColor: Colors.grey[100],
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(15),
+                          borderSide: BorderSide.none,
+                        ),
+                        contentPadding:
+                            const EdgeInsets.symmetric(horizontal: 20),
+                      ),
+                    ),
+                  ),
+                  const Divider(),
+                  Expanded(
+                    child: _isLoadingBarangays
+                        ? Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const CircularProgressIndicator(
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                      Color(0xFF0E6B6F)),
+                                ),
+                                const SizedBox(height: 16),
+                                Text(
+                                  'Loading barangays...',
+                                  style: TextStyle(
+                                    color: Colors.grey[600],
+                                    fontSize: 14,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          )
+                        : ListView.builder(
+                            itemCount: _filteredBarangays.length,
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            itemBuilder: (context, index) {
+                              final barangay = _filteredBarangays[index];
+                              final isSelected = _selectedBarangay == barangay;
+
+                              return Container(
+                                margin: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: isSelected
+                                      ? const Color(0xFF0E6B6F).withOpacity(0.1)
+                                      : Colors.white,
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: isSelected
+                                        ? const Color(0xFF0E6B6F)
+                                        : Colors.grey[300]!,
+                                    width: isSelected ? 2 : 1,
+                                  ),
+                                ),
+                                child: ListTile(
+                                  contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 20),
+                                  title: Text(
+                                    barangay,
+                                    style: TextStyle(
+                                      color: isSelected
+                                          ? const Color(0xFF0E6B6F)
+                                          : Colors.black87,
+                                      fontWeight: isSelected
+                                          ? FontWeight.bold
+                                          : FontWeight.normal,
+                                    ),
+                                  ),
+                                  trailing: isSelected
+                                      ? const Icon(Icons.check_circle,
+                                          color: Color(0xFF0E6B6F))
+                                      : null,
+                                  onTap: () {
+                                    setState(() {
+                                      _selectedBarangay = barangay;
+                                      _barangayController.text = barangay;
+                                    });
+                                    Navigator.pop(context);
+                                  },
+                                ),
+                              );
+                            },
+                          ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
     );
   }
 }

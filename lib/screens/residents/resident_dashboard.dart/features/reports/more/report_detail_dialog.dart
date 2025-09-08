@@ -336,16 +336,57 @@ class ReportDetailBottomSheet extends StatelessWidget {
                               ),
                             ),
                             const SizedBox(height: 8),
-                            Container(
-                              width: double.infinity,
-                              height: 200,
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(12),
-                                image: DecorationImage(
-                                  image: NetworkImage(
-                                      report['imageUrl'] as String),
-                                  fit: BoxFit.cover,
+                            GestureDetector(
+                              onTap: () => _showFullImageDialog(
+                                  context, report['imageUrl'] as String),
+                              child: Container(
+                                width: double.infinity,
+                                height:
+                                    300, // Increased height for better visibility
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(12),
+                                  image: DecorationImage(
+                                    image: NetworkImage(
+                                        report['imageUrl'] as String),
+                                    fit: BoxFit
+                                        .contain, // Changed to contain for full image
+                                  ),
+                                  border: Border.all(
+                                    color: Colors.grey[300]!,
+                                    width: 1,
+                                  ),
                                 ),
+                                child: Stack(
+                                  children: [
+                                    // Overlay with zoom icon
+                                    Positioned(
+                                      top: 8,
+                                      right: 8,
+                                      child: Container(
+                                        padding: const EdgeInsets.all(6),
+                                        decoration: BoxDecoration(
+                                          color: Colors.black.withOpacity(0.6),
+                                          borderRadius:
+                                              BorderRadius.circular(20),
+                                        ),
+                                        child: const Icon(
+                                          Icons.zoom_in,
+                                          color: Colors.white,
+                                          size: 20,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              "Tap to view full image",
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey[600],
+                                fontStyle: FontStyle.italic,
                               ),
                             ),
                           ],
@@ -514,25 +555,128 @@ class ReportDetailBottomSheet extends StatelessWidget {
     // Check if we can find a purok number pattern
     var match = purokRegex.firstMatch(address);
     if (match != null && match.groupCount >= 1) {
-      return match.group(1) ?? '';
+      return 'Purok ${match.group(1)}';
     }
 
-    // If we can't find a purok number pattern, just clean up the string
+    // Try alternative patterns like "purok-1", "purok_1", etc.
+    RegExp altPurokRegex = RegExp(r'purok[-_\s]*(\d+)', caseSensitive: false);
+    var altMatch = altPurokRegex.firstMatch(address);
+    if (altMatch != null && altMatch.groupCount >= 1) {
+      return 'Purok ${altMatch.group(1)}';
+    }
+
+    // If we can't find a purok number pattern, try to extract any number that might be purok
     String cleanAddress = address.toLowerCase();
-    if (cleanAddress.contains('purok')) {
-      cleanAddress = cleanAddress
-          .replaceAll(RegExp('purok', caseSensitive: false), '')
-          .trim();
-    }
-
-    // If it contains "langcangan" or other location names, try to extract just numbers
     RegExp numbersOnly = RegExp(r'\d+');
     var numberMatch = numbersOnly.firstMatch(cleanAddress);
     if (numberMatch != null) {
-      return numberMatch.group(0) ?? '';
+      return 'Purok ${numberMatch.group(0)}';
     }
 
-    // If all else fails, just return a simplified version
-    return cleanAddress;
+    // If all else fails, return the original address
+    return address;
+  }
+
+  void _showFullImageDialog(BuildContext context, String imageUrl) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return Dialog(
+          backgroundColor: Colors.black,
+          child: Stack(
+            children: [
+              // Full screen image
+              Center(
+                child: InteractiveViewer(
+                  panEnabled: true,
+                  boundaryMargin: const EdgeInsets.all(20),
+                  minScale: 0.5,
+                  maxScale: 4.0,
+                  child: Image.network(
+                    imageUrl,
+                    fit: BoxFit.contain,
+                    loadingBuilder: (context, child, loadingProgress) {
+                      if (loadingProgress == null) return child;
+                      return Center(
+                        child: CircularProgressIndicator(
+                          value: loadingProgress.expectedTotalBytes != null
+                              ? loadingProgress.cumulativeBytesLoaded /
+                                  loadingProgress.expectedTotalBytes!
+                              : null,
+                          color: Colors.white,
+                        ),
+                      );
+                    },
+                    errorBuilder: (context, error, stackTrace) {
+                      return const Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.error_outline,
+                              color: Colors.white,
+                              size: 48,
+                            ),
+                            SizedBox(height: 16),
+                            Text(
+                              'Failed to load image',
+                              style: TextStyle(color: Colors.white),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ),
+              // Close button
+              Positioned(
+                top: 40,
+                right: 20,
+                child: GestureDetector(
+                  onTap: () => Navigator.of(context).pop(),
+                  child: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.6),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.close,
+                      color: Colors.white,
+                      size: 24,
+                    ),
+                  ),
+                ),
+              ),
+              // Instructions
+              Positioned(
+                bottom: 40,
+                left: 20,
+                right: 20,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.6),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: const Text(
+                    'Pinch to zoom • Drag to pan • Tap outside to close',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
 }

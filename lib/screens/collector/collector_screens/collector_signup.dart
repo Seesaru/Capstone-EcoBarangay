@@ -5,7 +5,6 @@ import 'package:lottie/lottie.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:capstone_ecobarangay/screens/others/collector_verification_screen.dart';
 import 'package:capstone_ecobarangay/utilities/terms_service_helper.dart';
-import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:flutter/services.dart'; // Added for FilteringTextInputFormatter
 
 class CollectorSignUpScreen extends StatefulWidget {
@@ -37,7 +36,6 @@ class _CollectorSignUpScreenState extends State<CollectorSignUpScreen> {
   List<String> _barangaySuggestions = [];
   bool _isLoadingBarangays = true;
   List<String> _filteredBarangays = [];
-  bool _showBarangaySuggestions = false;
   Map<String, String> _barangayIdMap = {};
 
   @override
@@ -289,7 +287,6 @@ class _CollectorSignUpScreenState extends State<CollectorSignUpScreen> {
     if (_barangayController.text.isEmpty) {
       setState(() {
         _filteredBarangays = List.from(_barangaySuggestions);
-        _showBarangaySuggestions = false;
       });
     } else {
       setState(() {
@@ -298,7 +295,6 @@ class _CollectorSignUpScreenState extends State<CollectorSignUpScreen> {
                 .toLowerCase()
                 .contains(_barangayController.text.toLowerCase()))
             .toList();
-        _showBarangaySuggestions = true;
         _selectedBarangay = _barangayController.text.trim();
       });
     }

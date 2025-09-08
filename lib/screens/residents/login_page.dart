@@ -271,7 +271,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                             const SizedBox(height: 5),
                             const Text(
-                              'Sustaining Communities, Protecting Nature',
+                              'Sustaining Communities',
                               style: TextStyle(
                                 fontSize: 14,
                                 fontWeight: FontWeight.w500,
@@ -330,7 +330,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                 ),
                                 const SizedBox(height: 5),
                                 const Text(
-                                  'Sustaining Communities, Protecting Nature',
+                                  'Sustaining Communities',
                                   style: TextStyle(
                                     fontSize: 14,
                                     fontWeight: FontWeight.w500,

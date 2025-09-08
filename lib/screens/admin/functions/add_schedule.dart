@@ -4,6 +4,7 @@ import 'package:capstone_ecobarangay/screens/others/reusable_widgets.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:capstone_ecobarangay/services/onesignal_notif.dart';
+import 'package:capstone_ecobarangay/services/notification_service.dart';
 
 class AddScheduleScreen extends StatefulWidget {
   final Function? onBackPressed;
@@ -1129,21 +1130,7 @@ class _AddScheduleScreenState extends State<AddScheduleScreen> {
 
   void _saveSingleSchedule() {
     // Convert selected date and times to a format suitable for Firestore
-    final DateTime scheduleDateTime = DateTime(
-      _selectedDate.year,
-      _selectedDate.month,
-      _selectedDate.day,
-      _startTime.hour,
-      _startTime.minute,
-    );
 
-    final DateTime endDateTime = DateTime(
-      _selectedDate.year,
-      _selectedDate.month,
-      _selectedDate.day,
-      _endTime.hour,
-      _endTime.minute,
-    );
 
     // Create schedule data map
     final scheduleData = {
@@ -1172,8 +1159,28 @@ class _AddScheduleScreenState extends State<AddScheduleScreen> {
     FirebaseFirestore.instance
         .collection('schedule')
         .add(scheduleData)
-        .then((docRef) {
+        .then((docRef) async {
       if (mounted) {
+        // Create notification record in the notifications collection
+        await NotificationService.createScheduleNotification(
+          scheduleId: docRef.id,
+          title: _titleController.text,
+          content: 'Collection of ${_wasteType.toLowerCase()} waste',
+          barangay: _adminBarangay,
+          date: _selectedDate,
+          startTime: {
+            'hour': _startTime.hour,
+            'minute': _startTime.minute,
+          },
+          endTime: {
+            'hour': _endTime.hour,
+            'minute': _endTime.minute,
+          },
+          wasteType: _wasteType,
+          location: _locationController.text,
+          isRecurring: false,
+        );
+
         // Format date for notification
         String formattedDate = DateFormat('MMMM d, yyyy').format(_selectedDate);
         String formattedTime =
@@ -1278,6 +1285,8 @@ class _AddScheduleScreenState extends State<AddScheduleScreen> {
 
     // For each selected weekday, create schedules with the corresponding waste type
     int totalSchedules = 0;
+    List<String> scheduleIds = []; // Store schedule IDs for notifications
+
     weekdaySchedules.forEach((weekdayIndex, dates) {
       String wasteType = _weekdayWasteTypes[weekdayIndex];
 
@@ -1320,13 +1329,51 @@ class _AddScheduleScreenState extends State<AddScheduleScreen> {
               : null,
         });
 
+        scheduleIds.add(docRef.id);
         totalSchedules++;
       }
     });
 
     // Commit the batch
-    batch.commit().then((_) {
+    batch.commit().then((_) async {
       if (mounted) {
+        // Create notification records for each schedule
+        for (int i = 0; i < scheduleIds.length; i++) {
+          int weekdayIndex = 0;
+          for (int j = 0; j < _selectedWeekdays.length; j++) {
+            if (_selectedWeekdays[j]) {
+              if (i == 0) {
+                weekdayIndex = j;
+                break;
+              }
+              i--;
+            }
+          }
+
+          String wasteType = _weekdayWasteTypes[weekdayIndex];
+          DateTime scheduleDate = allScheduleDates[i];
+
+          await NotificationService.createScheduleNotification(
+            scheduleId: scheduleIds[i],
+            title: _titleController.text,
+            content: 'Collection of ${wasteType.toLowerCase()} waste',
+            barangay: _adminBarangay,
+            date: scheduleDate,
+            startTime: {
+              'hour': _startTime.hour,
+              'minute': _startTime.minute,
+            },
+            endTime: {
+              'hour': _endTime.hour,
+              'minute': _endTime.minute,
+            },
+            wasteType: wasteType,
+            location: _locationController.text,
+            isRecurring: true,
+            recurringGroupId: recurringGroupId,
+          );
+        }
+
         // Format string for notification including waste types per day
         List<String> scheduleDetails = [];
         for (int i = 0; i < _selectedWeekdays.length; i++) {

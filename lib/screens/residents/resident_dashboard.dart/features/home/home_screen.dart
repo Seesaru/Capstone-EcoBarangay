@@ -9,6 +9,8 @@ import 'package:capstone_ecobarangay/screens/residents/resident_dashboard.dart/f
 import 'package:capstone_ecobarangay/screens/residents/resident_dashboard.dart/features/reports/reports_screen.dart';
 import 'package:capstone_ecobarangay/screens/residents/resident_dashboard.dart/features/profile/profile_screen.dart';
 import '../notifications/notification_screen.dart';
+import 'package:capstone_ecobarangay/services/notification_service.dart';
+import 'dart:async';
 
 class ResidentHomeScreen extends StatefulWidget {
   const ResidentHomeScreen({super.key});
@@ -36,6 +38,8 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
   // For quick stats
   int _upcomingSchedulesCount = 0;
   int _unreadAnnouncementsCount = 0;
+  int _unreadNotificationCount = 0;
+  StreamSubscription<QuerySnapshot>? _notifSub;
 
   // Current date formatter
   final String _currentDate =
@@ -45,6 +49,12 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
   void initState() {
     super.initState();
     _fetchResidentInfo();
+  }
+
+  @override
+  void dispose() {
+    _notifSub?.cancel();
+    super.dispose();
   }
 
   Future<void> _fetchResidentInfo() async {
@@ -68,7 +78,8 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
             _residentImageUrl = userData['profileImageUrl'] ?? '';
           });
 
-          // Now fetch schedules and announcements
+          // Now fetch schedules, announcements, and notification count
+          _startRealtimeNotificationListener();
           await Future.wait([
             _fetchSchedules(),
             _fetchAnnouncements(),
@@ -93,6 +104,64 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
         _isLoading = false;
       });
     }
+  }
+
+  // Fetch notification count
+  Future<void> _fetchNotificationCount() async {
+    try {
+      User? currentUser = _auth.currentUser;
+      if (currentUser != null) {
+        int count = await NotificationService.getUnreadNotificationCount(
+          userId: currentUser.uid,
+          barangay: _residentBarangay,
+        );
+
+        setState(() {
+          _unreadNotificationCount = count;
+        });
+      }
+    } catch (e) {
+      print('Error fetching notification count: $e');
+    }
+  }
+
+  void _startRealtimeNotificationListener() {
+    // Avoid duplicate listeners
+    _notifSub?.cancel();
+
+    final String barangay = _residentBarangay;
+    final String? userId = _auth.currentUser?.uid;
+    if (barangay.isEmpty || userId == null) return;
+
+    // Listen to unread notifications for this barangay; filter per-user in memory
+    _notifSub = _firestore
+        .collection('notifications')
+        .where('isRead', isEqualTo: false)
+        .where('barangay', isEqualTo: barangay)
+        .snapshots()
+        .listen((snapshot) {
+      int count = 0;
+      for (var doc in snapshot.docs) {
+        final data = doc.data() as Map<String, dynamic>;
+        final String? targetUserId = data['targetUserId'];
+        final List<dynamic> readBy =
+            (data['readByUserIds'] as List<dynamic>?) ?? const [];
+        // Count if it's a broadcast or specifically for this user
+        final bool isForThisUser =
+            targetUserId == null || targetUserId == userId;
+        final bool alreadyReadByUser = readBy.contains(userId);
+        if (isForThisUser && !alreadyReadByUser) {
+          count++;
+        }
+      }
+      if (mounted) {
+        setState(() {
+          _unreadNotificationCount = count;
+        });
+      }
+    }, onError: (e) {
+      print('Realtime notif listener error: $e');
+    });
   }
 
   // Fetch schedules from Firestore based on resident's barangay
@@ -241,10 +310,6 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
           .get();
 
       // Maps for category icons and colors
-      final Map<String, IconData> categoryIcons = {
-        'General': FontAwesomeIcons.bullhorn,
-        'Waste Management': FontAwesomeIcons.recycle,
-      };
 
       final Map<String, Color> categoryColors = {
         'General': Colors.blue,
@@ -346,16 +411,30 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
                   Icons.notifications,
                   color: Colors.white,
                 ),
-                onPressed: () {
+                onPressed: () async {
+                  // Clear notification count when opening notification screen
+                  User? currentUser = _auth.currentUser;
+                  if (currentUser != null) {
+                    await NotificationService.clearNotificationCount(
+                        currentUser.uid);
+                    setState(() {
+                      _unreadNotificationCount = 0;
+                    });
+                  }
+
                   Navigator.push(
                     context,
                     MaterialPageRoute(
                       builder: (context) => const NotificationScreen(),
                     ),
-                  );
+                  ).then((_) {
+                    // Ensure listener reevaluates; it already runs but we can no-op here
+                    // This prevents stale UI if rebuild timing races occur
+                    if (mounted) setState(() {});
+                  });
                 },
               ),
-              if (_unreadAnnouncementsCount > 0)
+              if (_unreadNotificationCount > 0)
                 Positioned(
                   top: 10,
                   right: 10,
@@ -366,7 +445,7 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
                       shape: BoxShape.circle,
                     ),
                     child: Text(
-                      _unreadAnnouncementsCount.toString(),
+                      _unreadNotificationCount.toString(),
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 8,

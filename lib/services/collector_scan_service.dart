@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:capstone_ecobarangay/services/notification_service.dart';
 
 class CollectorScanService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -503,6 +504,40 @@ class CollectorScanService {
           await _firestore.collection('scans').add(scanData);
 
       print('Scan saved successfully with ID: ${scanRef.id}');
+
+      // Create notification records based on scan results
+      bool hasWarningsOrPenalties =
+          hasFailedToContribute || hasNotSegregated || hasNoContributions;
+      if (hasWarningsOrPenalties) {
+        // Create penalty notification
+        await NotificationService.createPenaltyNotification(
+          scanId: scanRef.id,
+          residentId: residentId,
+          residentName: residentName,
+          barangay: barangay,
+          purok: purok,
+          warnings: hasFailedToContribute ? ['Failed to Contribute'] : [],
+          penalties: [
+            if (hasNotSegregated) 'Not Segregated',
+            if (hasNoContributions) 'No Contributions',
+          ],
+          garbageType: garbageType,
+          garbageWeight: garbageWeight,
+          pointsAwarded: pointsAwarded,
+        );
+      } else {
+        // Create successful scan notification
+        await NotificationService.createScannedNotification(
+          scanId: scanRef.id,
+          residentId: residentId,
+          residentName: residentName,
+          barangay: barangay,
+          purok: purok,
+          garbageType: garbageType,
+          garbageWeight: garbageWeight,
+          pointsAwarded: pointsAwarded,
+        );
+      }
 
       // Get resident's current points before update
       DocumentSnapshot residentDoc =

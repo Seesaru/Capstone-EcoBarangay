@@ -469,6 +469,73 @@ class AuthService {
     }
   }
 
+  // Check if user is currently logged in and get their role
+  Future<Map<String, dynamic>?> getCurrentUserRole() async {
+    try {
+      User? user = _auth.currentUser;
+      if (user == null) {
+        return null;
+      }
+
+      // Check if user is a resident
+      DocumentSnapshot residentDoc = await _firestore
+          .collection('resident')
+          .doc(user.uid)
+          .get(GetOptions(source: Source.serverAndCache));
+
+      if (residentDoc.exists) {
+        Map<String, dynamic> userData =
+            residentDoc.data() as Map<String, dynamic>;
+        return {
+          'role': 'resident',
+          'uid': user.uid,
+          'email': user.email,
+          'data': userData,
+        };
+      }
+
+      // Check if user is a collector
+      DocumentSnapshot collectorDoc = await _firestore
+          .collection('collector')
+          .doc(user.uid)
+          .get(GetOptions(source: Source.serverAndCache));
+
+      if (collectorDoc.exists) {
+        Map<String, dynamic> collectorData =
+            collectorDoc.data() as Map<String, dynamic>;
+        return {
+          'role': 'collector',
+          'uid': user.uid,
+          'email': user.email,
+          'data': collectorData,
+        };
+      }
+
+      // Check if user is an admin
+      DocumentSnapshot adminDoc = await _firestore
+          .collection('barangay_admins')
+          .doc(user.uid)
+          .get(GetOptions(source: Source.serverAndCache));
+
+      if (adminDoc.exists) {
+        Map<String, dynamic> adminData =
+            adminDoc.data() as Map<String, dynamic>;
+        return {
+          'role': 'admin',
+          'uid': user.uid,
+          'email': user.email,
+          'data': adminData,
+        };
+      }
+
+      // User exists in Firebase Auth but not in any collection
+      return null;
+    } catch (e) {
+      print("Error getting current user role: $e");
+      return null;
+    }
+  }
+
   // Log resident logout activity
   Future<void> logResidentLogout(String userId) async {
     try {

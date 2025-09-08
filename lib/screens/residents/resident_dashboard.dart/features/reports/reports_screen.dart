@@ -59,7 +59,9 @@ class _ReportScreenState extends State<ReportScreen>
     'All Time',
     'This Week',
     'This Month',
+    'Custom'
   ];
+  DateTime? _customDate; // Selected custom date
 
   @override
   void initState() {
@@ -85,6 +87,22 @@ class _ReportScreenState extends State<ReportScreen>
   List<DocumentSnapshot> _filterReports(List<DocumentSnapshot> reports) {
     List<DocumentSnapshot> filtered = List.from(reports);
 
+    // Apply approval status and visibility filter first
+    filtered = filtered.where((report) {
+      // Check if the report has the new approval fields
+      final data = report.data() as Map<String, dynamic>?;
+      final approvalStatus = data?['approvalStatus'] as String?;
+      final visibility = data?['visibility'] as String?;
+
+      // If approval fields don't exist, treat as old report (show it)
+      if (approvalStatus == null && visibility == null) {
+        return true; // Show old reports that don't have approval system
+      }
+
+      // Only show approved public reports for new reports
+      return approvalStatus == 'approved' && visibility == 'public';
+    }).toList();
+
     // Apply time filter - Updated to match announcement screen logic
     if (_selectedTimeFilter != 'All Time') {
       DateTime now = DateTime.now();
@@ -96,19 +114,34 @@ class _ReportScreenState extends State<ReportScreen>
           cutoffDate = now.subtract(Duration(days: now.weekday % 7));
           cutoffDate =
               DateTime(cutoffDate.year, cutoffDate.month, cutoffDate.day);
+          filtered = filtered.where((report) {
+            final reportDate = (report['date'] as Timestamp).toDate();
+            return reportDate.isAfter(cutoffDate) ||
+                reportDate.isAtSameMomentAs(cutoffDate);
+          }).toList();
           break;
         case 'This Month':
           cutoffDate = DateTime(now.year, now.month, 1);
+          filtered = filtered.where((report) {
+            final reportDate = (report['date'] as Timestamp).toDate();
+            return reportDate.isAfter(cutoffDate) ||
+                reportDate.isAtSameMomentAs(cutoffDate);
+          }).toList();
+          break;
+        case 'Custom':
+          if (_customDate != null) {
+            final start = DateTime(
+                _customDate!.year, _customDate!.month, _customDate!.day);
+            final end = start.add(const Duration(days: 1));
+            filtered = filtered.where((report) {
+              final reportDate = (report['date'] as Timestamp).toDate();
+              return !reportDate.isBefore(start) && reportDate.isBefore(end);
+            }).toList();
+          }
           break;
         default:
-          cutoffDate = DateTime(1900); // Very old date to include everything
+          break;
       }
-
-      filtered = filtered.where((report) {
-        final reportDate = (report['date'] as Timestamp).toDate();
-        return reportDate.isAfter(cutoffDate) ||
-            reportDate.isAtSameMomentAs(cutoffDate);
-      }).toList();
     }
 
     // Apply search filter
@@ -289,7 +322,11 @@ class _ReportScreenState extends State<ReportScreen>
                 padding: const EdgeInsets.only(right: 8),
                 child: FilterChip(
                   label: Text(
-                    filter,
+                    filter == 'Custom' && _customDate != null
+                        ? 'Custom (' +
+                            DateFormat('MMM d, yyyy').format(_customDate!) +
+                            ')'
+                        : filter,
                     style: TextStyle(
                       fontSize: 12,
                       fontWeight: _selectedTimeFilter == filter
@@ -307,7 +344,11 @@ class _ReportScreenState extends State<ReportScreen>
                   padding:
                       const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
                   visualDensity: VisualDensity.compact,
-                  onSelected: (selected) {
+                  onSelected: (selected) async {
+                    if (filter == 'Custom') {
+                      await _pickCustomDate();
+                      return;
+                    }
                     if (selected) {
                       setState(() {
                         _selectedTimeFilter = filter;
@@ -493,12 +534,12 @@ class _ReportScreenState extends State<ReportScreen>
             padding: const EdgeInsets.symmetric(horizontal: 32),
             child: Text(
               _tabController.index > 0
-                  ? 'There are no reports in this category'
+                  ? 'There are no approved reports in this category'
                   : _selectedTimeFilter != 'All Time'
-                      ? 'No reports for $_selectedTimeFilter'
+                      ? 'No approved reports for $_selectedTimeFilter'
                       : _searchQuery.isNotEmpty
                           ? 'Try a different search term'
-                          : 'Be the first to report an issue in your community',
+                          : 'No approved reports available. Submit a report to get started!',
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: Colors.grey[600],
@@ -513,7 +554,8 @@ class _ReportScreenState extends State<ReportScreen>
                 _tabController.animateTo(0);
                 _searchController.clear();
                 _searchQuery = '';
-                _selectedTimeFilter = 'All Time';
+                _selectedTimeFilter = 'This Week';
+                _customDate = null;
               });
             },
             icon: const Icon(Icons.refresh, size: 16),
@@ -545,7 +587,7 @@ class _ReportScreenState extends State<ReportScreen>
 
     // Get status if available
     final String status = data['status'] as String? ?? 'New';
-    final Color statusColor = _getStatusColor(status);
+    _getStatusColor(status);
 
     return GestureDetector(
       onTap: () {
@@ -801,6 +843,41 @@ class _ReportScreenState extends State<ReportScreen>
         return Colors.red;
       default:
         return Colors.grey;
+    }
+  }
+
+  Future<void> _pickCustomDate() async {
+    final DateTime now = DateTime.now();
+    final DateTime initial =
+        _customDate ?? DateTime(now.year, now.month, now.day);
+    final DateTime? picked = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(now.year, now.month, now.day),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: const ColorScheme.light(
+              primary: Color.fromARGB(255, 3, 144, 123),
+              onPrimary: Colors.white,
+              onSurface: Colors.black,
+            ),
+            textButtonTheme: TextButtonThemeData(
+              style: TextButton.styleFrom(
+                foregroundColor: const Color.fromARGB(255, 3, 144, 123),
+              ),
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+    if (picked != null) {
+      setState(() {
+        _customDate = DateTime(picked.year, picked.month, picked.day);
+        _selectedTimeFilter = 'Custom';
+      });
     }
   }
 }

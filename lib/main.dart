@@ -5,6 +5,7 @@ import 'package:capstone_ecobarangay/screens/others/collector_verification_scree
 import 'package:capstone_ecobarangay/screens/residents/resident_dashboard.dart/dashboard.dart';
 import 'package:capstone_ecobarangay/screens/residents/resident_dashboard.dart/features/reports/more/add_report.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:capstone_ecobarangay/screens/residents/login_page.dart';
@@ -27,6 +28,11 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 void main() async {
   // Ensure Flutter binding is initialized
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Lock orientation to portrait only
+  await SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+  ]);
 
   // Initialize Firebase
   if (kIsWeb) {

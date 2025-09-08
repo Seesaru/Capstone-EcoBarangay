@@ -89,8 +89,7 @@ class _CreateReportScreenState extends State<CreateReportScreen> {
             _residentBarangay = userData['barangay'] ?? '';
             // Combine purok and barangay for full address if available
             if (userData['purok'] != null) {
-              _residentAddress =
-                  'Purok ${userData['purok']}, ${_residentBarangay}';
+              _residentAddress = '${userData['purok']}, ${_residentBarangay}';
             } else {
               _residentAddress = _residentBarangay;
             }
@@ -232,7 +231,9 @@ class _CreateReportScreenState extends State<CreateReportScreen> {
           'category': _selectedCategory,
           'imageUrl': imageUrl,
           'date': Timestamp.now(),
-          'status': 'New', // Add default status
+          'status': 'Pending Approval', // Set as pending approval
+          'approvalStatus': 'pending', // New field for approval tracking
+          'visibility': 'pending', // Will be set by admin (public/confidential)
           'author': _isAnonymous ? 'Anonymous User' : _residentName,
           'authorId': _userId, // Always store the user ID even if anonymous
           'authorAvatar': '', // Add user avatar if available
@@ -240,6 +241,9 @@ class _CreateReportScreenState extends State<CreateReportScreen> {
           'isAnonymous': _isAnonymous,
           'residentBarangay': _residentBarangay,
           'residentAddress': _residentAddress,
+          'submittedAt': Timestamp.now(),
+          'approvedAt': null,
+          'approvedBy': null,
         };
 
         // Save to Firestore
@@ -254,12 +258,14 @@ class _CreateReportScreenState extends State<CreateReportScreen> {
         // Show success message
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('Report submitted successfully!'),
+            content: const Text(
+                'Report submitted for approval! You will be notified once it\'s reviewed.'),
             backgroundColor: const Color.fromARGB(255, 3, 144, 123),
             behavior: SnackBarBehavior.floating,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(10.0),
             ),
+            duration: const Duration(seconds: 4),
           ),
         );
 
@@ -377,7 +383,7 @@ class _CreateReportScreenState extends State<CreateReportScreen> {
                                       borderRadius: BorderRadius.circular(16),
                                       child: Image.file(
                                         _imageFile!,
-                                        fit: BoxFit.cover,
+                                        fit: BoxFit.contain,
                                       ),
                                     ),
                                     Positioned(
@@ -558,7 +564,7 @@ class _CreateReportScreenState extends State<CreateReportScreen> {
                     TextFormField(
                       controller: _titleController,
                       decoration: InputDecoration(
-                        hintText: "Enter a concise title for your report",
+                        hintText: "Add title",
                         filled: true,
                         fillColor: Colors.grey[50],
                         border: OutlineInputBorder(
@@ -603,7 +609,7 @@ class _CreateReportScreenState extends State<CreateReportScreen> {
                     TextFormField(
                       controller: _locationController,
                       decoration: InputDecoration(
-                        hintText: "Enter the location of the issue",
+                        hintText: "Add location",
                         prefixIcon: Icon(
                           Icons.location_on_outlined,
                           color: Colors.grey[600],

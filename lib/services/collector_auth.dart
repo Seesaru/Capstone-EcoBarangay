@@ -459,4 +459,37 @@ class CollectorAuthService {
       rethrow;
     }
   }
+
+  // Check if collector is currently logged in and get their role
+  Future<Map<String, dynamic>?> getCurrentCollectorRole() async {
+    try {
+      User? user = _auth.currentUser;
+      if (user == null) {
+        return null;
+      }
+
+      // Check if user is a collector
+      DocumentSnapshot collectorDoc = await _firestore
+          .collection('collector')
+          .doc(user.uid)
+          .get(GetOptions(source: Source.serverAndCache));
+
+      if (collectorDoc.exists) {
+        Map<String, dynamic> collectorData =
+            collectorDoc.data() as Map<String, dynamic>;
+        return {
+          'role': 'collector',
+          'uid': user.uid,
+          'email': user.email,
+          'data': collectorData,
+        };
+      }
+
+      // User exists in Firebase Auth but not in collector collection
+      return null;
+    } catch (e) {
+      print("Error getting current collector role: $e");
+      return null;
+    }
+  }
 }

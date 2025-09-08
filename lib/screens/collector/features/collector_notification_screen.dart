@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'collector_announcement_detail_dialog.dart';
 import 'collector_schedule_detail_dialog.dart';
+import 'package:capstone_ecobarangay/services/notification_service.dart';
 
 class CollectorNotificationScreen extends StatefulWidget {
   const CollectorNotificationScreen({Key? key}) : super(key: key);
@@ -21,7 +22,9 @@ class _CollectorNotificationScreenState
 
   bool _isLoading = true;
   String _collectorBarangay = '';
-  List<Map<String, dynamic>> _notifications = [];
+  String _collectorId = '';
+  Map<String, List<Map<String, dynamic>>> _groupedNotifications = {};
+  List<String> _orderedGroupKeys = [];
 
   @override
   void initState() {
@@ -33,10 +36,12 @@ class _CollectorNotificationScreenState
     try {
       User? currentUser = _auth.currentUser;
       if (currentUser != null) {
-        DocumentSnapshot userDoc = await _firestore
-            .collection('collectors')
-            .doc(currentUser.uid)
-            .get();
+        setState(() {
+          _collectorId = currentUser.uid;
+        });
+
+        DocumentSnapshot userDoc =
+            await _firestore.collection('collector').doc(currentUser.uid).get();
 
         if (userDoc.exists) {
           Map<String, dynamic> userData =
@@ -60,84 +65,326 @@ class _CollectorNotificationScreenState
     if (_collectorBarangay.isEmpty) return;
 
     try {
-      // Fetch announcements
-      QuerySnapshot announcementSnapshot = await _firestore
-          .collection('announcements')
-          .where('barangay', isEqualTo: _collectorBarangay)
-          .orderBy('date', descending: true)
-          .get();
-
-      // Fetch schedules
-      QuerySnapshot scheduleSnapshot = await _firestore
-          .collection('schedule')
-          .where('barangay', isEqualTo: _collectorBarangay)
-          .orderBy('date', descending: true)
-          .get();
-
       List<Map<String, dynamic>> notifications = [];
 
-      // Process announcements
-      for (var doc in announcementSnapshot.docs) {
-        Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
-        DateTime date = (data['date'] as Timestamp).toDate();
+      // Process centralized notifications (non-scan notifications)
+      QuerySnapshot allNotificationsSnapshot =
+          await _firestore.collection('notifications').limit(100).get();
 
+      List<DocumentSnapshot> relevantNotifications = [];
+      for (var doc in allNotificationsSnapshot.docs) {
+        Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
+
+        // Check if this notification is relevant for this collector
+        bool isRelevant = false;
+
+        // Check if it's user-specific
+        if (data['targetUserId'] == _collectorId) {
+          isRelevant = true;
+        }
+        // Check if it's a broadcast notification for this barangay
+        else if (data['targetUserId'] == null &&
+            data['barangay'] == _collectorBarangay) {
+          isRelevant = true;
+        }
+
+        if (isRelevant) {
+          relevantNotifications.add(doc);
+        }
+      }
+
+      // Sort by timestamp in memory
+      relevantNotifications.sort((a, b) {
+        Map<String, dynamic> dataA = a.data() as Map<String, dynamic>;
+        Map<String, dynamic> dataB = b.data() as Map<String, dynamic>;
+        Timestamp? timestampA = dataA['timestamp'];
+        Timestamp? timestampB = dataB['timestamp'];
+
+        if (timestampA == null && timestampB == null) return 0;
+        if (timestampA == null) return 1;
+        if (timestampB == null) return -1;
+
+        return timestampB.compareTo(timestampA);
+      });
+
+      if (relevantNotifications.length > 20) {
+        relevantNotifications = relevantNotifications.take(20).toList();
+      }
+
+      // Process centralized notifications (only non-scan related ones)
+      for (var doc in relevantNotifications) {
+        Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
+
+        // Skip scan-related notifications - these will be handled separately
+        if (data['type'] == 'scan' ||
+            data['garbageType'] != null ||
+            data['garbageWeight'] != null ||
+            data['pointsAwarded'] != null ||
+            data['warnings'] != null ||
+            data['penalties'] != null) {
+          continue;
+        }
+
+        DateTime date = (data['timestamp'] as Timestamp).toDate();
+
+        // Get additional schedule data if it's a schedule notification
+        DateTime? collectionDate;
+        String? wasteType;
+        String? collectionTime;
+        
+        if (data['type']?.toLowerCase() == 'schedule') {
+          // Try to get collection data from the original schedule document
+          try {
+            DocumentSnapshot scheduleDoc = await _firestore
+                .collection('schedule')
+                .doc(data['sourceId'] ?? doc.id)
+                .get();
+            
+            if (scheduleDoc.exists) {
+              Map<String, dynamic> scheduleData = scheduleDoc.data() as Map<String, dynamic>;
+              collectionDate = scheduleData['date'] != null 
+                  ? (scheduleData['date'] as Timestamp).toDate() 
+                  : null;
+              wasteType = scheduleData['wasteType'] ?? scheduleData['garbageType'];
+              collectionTime = scheduleData['time'];
+            }
+          } catch (e) {
+            print('Error fetching schedule details: $e');
+          }
+          
+          // Fallback to notification data
+          collectionDate ??= data['collectionDate'] != null 
+              ? (data['collectionDate'] as Timestamp).toDate() 
+              : null;
+          wasteType ??= data['wasteType'] ?? data['garbageType'];
+          collectionTime ??= data['collectionTime'];
+        }
+
+        // Add generic notification from centralized collection
+        final bool isUrgent =
+            (data['urgent'] == true) || (data['isUrgent'] == true);
+        
         notifications.add({
-          'id': doc.id,
-          'type': 'announcement',
-          'title': data['title'] ?? 'No Title',
-          'content': data['content'] ?? 'No Content',
+          'id': data['sourceId'] ?? doc.id,
+          'type': data['type'] ?? 'general',
+          'title': data['title'] ?? 'Notification',
+          'content': data['type']?.toLowerCase() == 'schedule' 
+              ? _getScheduleContent(wasteType, collectionDate, collectionTime)
+              : (data['message'] ?? data['content'] ?? ''),
           'date': date,
-          'urgent': data['urgent'] ?? false,
-          'category': data['category'] ?? 'General',
-          'icon': data['urgent'] ?? false
-              ? FontAwesomeIcons.exclamationCircle
-              : FontAwesomeIcons.bullhorn,
-          'color': data['urgent'] ?? false ? Colors.red : Colors.blue,
+          'collectionDate': collectionDate,
+          'wasteType': wasteType,
+          'collectionTime': collectionTime,
+          'icon': _getIconForNotificationType(data['type']),
+          'color': (data['type']?.toLowerCase() == 'announcement' && isUrgent)
+              ? Colors.red
+              : _getColorForNotificationType(data['type']),
+          'badgeColor':
+              (data['type']?.toLowerCase() == 'announcement' && isUrgent)
+                  ? Colors.red
+                  : _getColorForNotificationType(data['type']),
+          'badgeText': (data['type'] == 'announcement' && isUrgent)
+              ? 'URGENT'
+              : (data['type'] ?? 'NOTIFICATION').toUpperCase(),
+          'source': 'notifications',
+          'sourceId': data['sourceId'] ?? doc.id,
+          'urgent': isUrgent,
+          'sourceType': data['sourceType'],
         });
       }
 
-      // Process schedules
-      for (var doc in scheduleSnapshot.docs) {
+      // Fetch collector-specific scans to create scan notifications
+      QuerySnapshot collectorScansSnapshot = await _firestore
+          .collection('scans')
+          .where('collectorId', isEqualTo: _collectorId)
+          .orderBy('timestamp', descending: true)
+          .limit(50)
+          .get();
+
+      print('DEBUG: Fetching scans for collector: $_collectorId');
+      print(
+          'DEBUG: Found ${collectorScansSnapshot.docs.length} scans for this collector');
+
+      // Process collector's scans
+      for (var doc in collectorScansSnapshot.docs) {
         Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
-        DateTime date = (data['date'] as Timestamp).toDate();
-        Map<String, dynamic> startTime =
-            data['startTime'] as Map<String, dynamic>;
+        DateTime date = (data['timestamp'] as Timestamp).toDate();
 
-        DateTime scheduleTime = DateTime(
-          date.year,
-          date.month,
-          date.day,
-          startTime['hour'] as int,
-          startTime['minute'] as int,
-        );
+        // Check for warnings and penalties
+        bool hasWarnings = false;
+        bool hasPenalties = false;
+        List<String> warnings = [];
+        List<String> penalties = [];
 
-        notifications.add({
-          'id': doc.id,
-          'type': 'schedule',
-          'title': '${data['wasteType']} Waste Collection',
-          'content': 'Location: ${data['location']}',
-          'date': scheduleTime,
-          'wasteType': data['wasteType'],
-          'location': data['location'],
-          'icon': FontAwesomeIcons.truck,
-          'color': Colors.green,
-        });
+        if (data['warnings'] != null && data['warnings'] is Map) {
+          Map<String, dynamic> warningsData =
+              data['warnings'] as Map<String, dynamic>;
+          if (warningsData['failedToContribute'] == true) {
+            hasWarnings = true;
+            warnings.add('Failed to Contribute');
+          }
+        }
+
+        if (data['penalties'] != null && data['penalties'] is Map) {
+          Map<String, dynamic> penaltiesData =
+              data['penalties'] as Map<String, dynamic>;
+          if (penaltiesData['notSegregated'] == true) {
+            hasPenalties = true;
+            penalties.add('Not Segregated');
+          }
+          if (penaltiesData['noContributions'] == true) {
+            hasPenalties = true;
+            penalties.add('No Contributions');
+          }
+        }
+
+        if (hasWarnings || hasPenalties) {
+          // Penalty notification (collector applied penalty to resident)
+          print(
+              'DEBUG: Creating penalty notification for collector: $_collectorId, scan: ${doc.id}');
+          notifications.add({
+            'id': doc.id,
+            'type': 'penalty',
+            'title': hasPenalties
+                ? 'Penalty Applied to Resident'
+                : 'Warning Issued to Resident',
+            'content': hasPenalties
+                ? 'Applied penalties: ${penalties.join(', ')}'
+                : 'Issued warnings: ${warnings.join(', ')}',
+            'date': date,
+            'warnings': warnings,
+            'penalties': penalties,
+            'hasWarnings': hasWarnings,
+            'hasPenalties': hasPenalties,
+            'icon': hasPenalties
+                ? FontAwesomeIcons.exclamationTriangle
+                : FontAwesomeIcons.warning,
+            'color': hasPenalties ? Colors.red : Colors.orange,
+            'badgeColor': hasPenalties ? Colors.red : Colors.orange,
+            'badgeText': hasPenalties ? 'PENALTY APPLIED' : 'WARNING ISSUED',
+            'garbageType': data['garbageType'] ?? 'Unknown',
+            'garbageWeight': data['garbageWeight'] ?? 0,
+            'pointsAwarded': data['pointsAwarded'] ?? 0,
+            'residentName': data['residentName'] ?? 'Unknown',
+            'residentId': data['residentId'] ?? '',
+            'source': 'scans',
+          });
+        } else {
+          // Successful scan notification (collector completed scan)
+          print(
+              'DEBUG: Creating scan notification for collector: $_collectorId, scan: ${doc.id}');
+          notifications.add({
+            'id': doc.id,
+            'type': 'scanned',
+            'title': 'Waste Collection Completed',
+            'content':
+                'Successfully collected ${data['garbageType'] ?? 'Unknown'} waste from resident',
+            'date': date,
+            'garbageType': data['garbageType'] ?? 'Unknown',
+            'garbageWeight': data['garbageWeight'] ?? 0,
+            'pointsAwarded': data['pointsAwarded'] ?? 0,
+            'residentName': data['residentName'] ?? 'Unknown',
+            'residentId': data['residentId'] ?? '',
+            'icon': FontAwesomeIcons.checkCircle,
+            'color': Colors.green,
+            'badgeColor': Colors.green,
+            'badgeText': 'COLLECTED',
+            'source': 'scans',
+          });
+        }
       }
 
       // Sort all notifications by date
       notifications.sort(
           (a, b) => (b['date'] as DateTime).compareTo(a['date'] as DateTime));
 
-      setState(() {
-        _notifications = notifications;
-      });
+      // Group for resident-like UI
+      _groupNotificationsByDate(notifications);
+
+      setState(() {});
     } catch (e) {
       print('Error fetching notifications: $e');
     }
   }
 
+  String _getScheduleContent(String? wasteType, DateTime? collectionDate, String? collectionTime) {
+    String type = wasteType ?? 'Waste';
+    
+    if (collectionDate != null) {
+      String dateStr = DateFormat('MMM d, yyyy').format(collectionDate);
+      if (collectionTime != null && collectionTime.isNotEmpty) {
+        return '$type collection scheduled for $dateStr at $collectionTime';
+      } else {
+        String timeStr = DateFormat('h:mm a').format(collectionDate);
+        return '$type collection scheduled for $dateStr at $timeStr';
+      }
+    } else if (collectionTime != null && collectionTime.isNotEmpty) {
+      return '$type collection scheduled at $collectionTime';
+    } else {
+      return '$type collection has been scheduled';
+    }
+  }
+
+  // Helper methods for generic notifications
+  IconData _getIconForNotificationType(String? type) {
+    switch (type?.toLowerCase()) {
+      case 'announcement':
+        return FontAwesomeIcons.bullhorn;
+      case 'schedule':
+        return FontAwesomeIcons.truck;
+      case 'penalty':
+        return FontAwesomeIcons.exclamationTriangle;
+      case 'warning':
+        return FontAwesomeIcons.warning;
+      case 'scan':
+      case 'scanned':
+        return FontAwesomeIcons.checkCircle;
+      case 'urgent':
+        return FontAwesomeIcons.exclamationCircle;
+      default:
+        return FontAwesomeIcons.bell;
+    }
+  }
+
+  Color _getColorForNotificationType(String? type) {
+    switch (type?.toLowerCase()) {
+      case 'announcement':
+        return Colors.blue;
+      case 'schedule':
+        return Colors.green;
+      case 'penalty':
+        return Colors.red;
+      case 'warning':
+        return Colors.orange;
+      case 'scan':
+      case 'scanned':
+        return Colors.green;
+      case 'urgent':
+        return Colors.red;
+      default:
+        return Colors.grey;
+    }
+  }
+
+  String _getBadgeTextForNotification(Map<String, dynamic> data) {
+    String type = data['type'] ?? 'general';
+    if (type.toLowerCase() == 'announcement' &&
+        (data['urgent'] == true || data['isUrgent'] == true)) {
+      return 'URGENT';
+    }
+    return (data['badgeText'] ?? type).toString().toUpperCase();
+  }
+
   Future<void> _onNotificationTap(Map<String, dynamic> notification) async {
     try {
+      // Mark centralized notifications as read similar to resident behavior
+      if (notification['source'] == 'notifications' &&
+          notification['sourceId'] != null) {
+        await NotificationService.markNotificationAsRead(
+          notificationId: notification['sourceId'],
+          userId: _collectorId,
+        );
+      }
       if (notification['type'] == 'announcement') {
         // Fetch complete announcement data
         DocumentSnapshot doc = await _firestore
@@ -171,35 +418,448 @@ class _CollectorNotificationScreenState
         if (doc.exists) {
           Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
 
-          // Add required fields for the dialog
+          // Add required fields for the dialog with proper date handling
           final scheduleData = {
             ...data,
             'id': doc.id,
+            // Use the actual collection date from the schedule document
             'date': (data['date'] as Timestamp).toDate(),
             'icon': FontAwesomeIcons.truck,
             'color': Colors.green,
+            'wasteType': data['wasteType'] ?? data['garbageType'] ?? 'General Waste',
+            'time': data['time'],
           };
 
           if (mounted) {
             showCollectorScheduleDetailDialog(context, scheduleData);
           }
         }
+      } else if (notification['type'] == 'penalty' ||
+          notification['type'] == 'scanned') {
+        // Show scan detail dialog
+        _showScanDetailDialog(notification);
       }
     } catch (e) {
       print('Error showing notification detail: $e');
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    if (_isLoading) {
-      return const Scaffold(
-        body: Center(
-          child: CircularProgressIndicator(),
-        ),
-      );
+  // Grouping helpers mirroring resident screen
+  void _groupNotificationsByDate(List<Map<String, dynamic>> notifications) {
+    _groupedNotifications.clear();
+    _orderedGroupKeys.clear();
+
+    final List<String> groupOrder = [
+      'Today',
+      'Yesterday',
+      'This Week',
+      'This Month',
+      'Earlier'
+    ];
+
+    for (var notification in notifications) {
+      DateTime date = notification['date'] as DateTime;
+      String groupKey = _getDateGroupKey(date);
+
+      _groupedNotifications.putIfAbsent(groupKey, () => []);
+      _groupedNotifications[groupKey]!.add(notification);
     }
 
+    for (String groupKey in groupOrder) {
+      if (_groupedNotifications.containsKey(groupKey) &&
+          _groupedNotifications[groupKey]!.isNotEmpty) {
+        _orderedGroupKeys.add(groupKey);
+      }
+    }
+  }
+
+  String _getDateGroupKey(DateTime date) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final yesterday = today.subtract(const Duration(days: 1));
+
+    final daysFromMonday = now.weekday - 1;
+    final thisWeekStart = today.subtract(Duration(days: daysFromMonday));
+    final thisMonthStart = DateTime(now.year, now.month, 1);
+
+    final notificationDate = DateTime(date.year, date.month, date.day);
+
+    if (notificationDate == today) {
+      return 'Today';
+    } else if (notificationDate == yesterday) {
+      return 'Yesterday';
+    } else if (notificationDate
+            .isAfter(thisWeekStart.subtract(const Duration(days: 1))) &&
+        notificationDate.isBefore(today)) {
+      return 'This Week';
+    } else if (notificationDate
+            .isAfter(thisMonthStart.subtract(const Duration(days: 1))) &&
+        notificationDate.isBefore(thisWeekStart)) {
+      return 'This Month';
+    } else {
+      return 'Earlier';
+    }
+  }
+
+  Widget _buildDateGroupHeader(String groupKey) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Text(
+        groupKey,
+        style: TextStyle(
+          fontSize: 14,
+          fontWeight: FontWeight.w600,
+          color: Colors.grey[600],
+        ),
+      ),
+    );
+  }
+
+  void _showScanDetailDialog(Map<String, dynamic> notification) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(
+              notification['icon'],
+              color: notification['color'],
+              size: 24,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                notification['title'],
+                style: const TextStyle(fontSize: 18),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Date: ${DateFormat('MMM d, yyyy h:mm a').format(notification['date'])}',
+              style: TextStyle(color: Colors.grey[600]),
+            ),
+            const SizedBox(height: 8),
+            Text('Resident: ${notification['residentName']}'),
+            Text('Waste Type: ${notification['garbageType']}'),
+            if (notification['garbageWeight'] > 0)
+              Text('Weight: ${notification['garbageWeight']} kg'),
+            if (notification['pointsAwarded'] > 0)
+              Text('Points Awarded: ${notification['pointsAwarded']}'),
+            if (notification['type'] == 'penalty') ...[
+              const SizedBox(height: 12),
+              if (notification['warnings'].isNotEmpty) ...[
+                Text(
+                  'Warnings Applied:',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: Colors.orange[700],
+                  ),
+                ),
+                ...notification['warnings'].map((warning) => Padding(
+                      padding: const EdgeInsets.only(left: 16),
+                      child: Text('• $warning'),
+                    )),
+              ],
+              if (notification['penalties'].isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text(
+                  'Penalties Applied:',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: Colors.red[700],
+                  ),
+                ),
+                ...notification['penalties'].map((penalty) => Padding(
+                      padding: const EdgeInsets.only(left: 16),
+                      child: Text('• $penalty'),
+                    )),
+              ],
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNotificationCard(Map<String, dynamic> notification) {
+    final DateTime date = notification['date'] as DateTime;
+    final String timeStr = DateFormat('h:mm a').format(date);
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: () => _onNotificationTap(notification),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Icon pill
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: notification['color'].withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(
+                      color: notification['color'].withOpacity(0.3),
+                      width: 1,
+                    ),
+                  ),
+                  child: Icon(
+                    notification['icon'],
+                    color: notification['color'],
+                    size: 16,
+                  ),
+                ),
+
+                const SizedBox(width: 12),
+
+                // Content
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: Text(
+                              notification['title'],
+                              style: TextStyle(
+                                fontWeight: notification['urgent'] == true
+                                    ? FontWeight.bold
+                                    : FontWeight.w600,
+                                fontSize: 14,
+                                color: Colors.grey[900],
+                                height: 1.2,
+                              ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            timeStr,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: Colors.grey[500],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        notification['content'],
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.grey[700],
+                          height: 1.3,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      if (notification['type'] == 'schedule') ...[
+                        const SizedBox(height: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: Colors.green.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            notification['collectionDate'] != null
+                                ? '${notification['wasteType'] ?? 'Waste'} - ${DateFormat('MMM d, yyyy').format(notification['collectionDate'])}'
+                                : '${notification['wasteType'] ?? 'Waste'} Collection',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: Colors.green[700],
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ] else if (notification['type'] == 'scanned') ...[
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            if ((notification['residentName'] ?? 'Unknown') !=
+                                'Unknown') ...[
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 6, vertical: 3),
+                                decoration: BoxDecoration(
+                                  color: Colors.purple.withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Text(
+                                  notification['residentName'],
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: Colors.purple[700],
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                            ],
+                            if ((notification['garbageWeight'] ?? 0) > 0) ...[
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 6, vertical: 3),
+                                decoration: BoxDecoration(
+                                  color: Colors.blue.withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Text(
+                                  '${notification['garbageWeight']} kg',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: Colors.blue[700],
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                            ],
+                            if ((notification['pointsAwarded'] ?? 0) > 0)
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 6, vertical: 3),
+                                decoration: BoxDecoration(
+                                  color: Colors.amber.withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Text(
+                                  '+${notification['pointsAwarded']} pts',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: Colors.amber[700],
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ] else if (notification['type'] == 'penalty') ...[
+                        const SizedBox(height: 6),
+                        if ((notification['residentName'] ?? 'Unknown') !=
+                            'Unknown') ...[
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: Colors.purple.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              'Resident: ${notification['residentName']}',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Colors.purple[700],
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 3),
+                        ],
+                        if ((notification['warnings'] ?? []).isNotEmpty) ...[
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: Colors.orange.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              'Warnings Applied: ${(notification['warnings'] as List).join(', ')}',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Colors.orange[700],
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 3),
+                        ],
+                        if ((notification['penalties'] ?? []).isNotEmpty)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: Colors.red.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              'Penalties Applied: ${(notification['penalties'] as List).join(', ')}',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Colors.red[700],
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ],
+                  ),
+                ),
+
+                const SizedBox(width: 8),
+
+                // Badge
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: notification['badgeColor'] ??
+                        _getColorForNotificationType(notification['type']),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    _getBadgeTextForNotification(notification),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 8,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.grey[100],
       appBar: AppBar(
@@ -233,88 +893,51 @@ class _CollectorNotificationScreenState
           ),
         ],
       ),
-      body: _notifications.isEmpty
-          ? Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    FontAwesomeIcons.bell,
-                    size: 64,
-                    color: Colors.grey[400],
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    'No notifications yet',
-                    style: TextStyle(
-                      fontSize: 18,
-                      color: Colors.grey[600],
-                    ),
-                  ),
-                ],
-              ),
-            )
-          : RefreshIndicator(
-              onRefresh: _fetchNotifications,
-              child: ListView.builder(
-                itemCount: _notifications.length,
-                itemBuilder: (context, index) {
-                  final notification = _notifications[index];
-                  final DateTime date = notification['date'] as DateTime;
-                  final bool isToday =
-                      DateTime.now().difference(date).inDays == 0;
-                  final bool isYesterday =
-                      DateTime.now().difference(date).inDays == 1;
-
-                  String dateStr;
-                  if (isToday) {
-                    dateStr = 'Today ${DateFormat('h:mm a').format(date)}';
-                  } else if (isYesterday) {
-                    dateStr = 'Yesterday ${DateFormat('h:mm a').format(date)}';
-                  } else {
-                    dateStr = DateFormat('MMM d, h:mm a').format(date);
-                  }
-
-                  return Card(
-                    margin:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    child: ListTile(
-                      leading: CircleAvatar(
-                        backgroundColor: notification['color'],
-                        child: Icon(
-                          notification['icon'],
-                          color: Colors.white,
-                          size: 20,
-                        ),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : (_groupedNotifications.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        FontAwesomeIcons.bell,
+                        size: 64,
+                        color: Colors.grey[400],
                       ),
-                      title: Text(
-                        notification['title'],
+                      const SizedBox(height: 16),
+                      Text(
+                        'No notifications yet',
                         style: TextStyle(
-                          fontWeight: notification['urgent'] == true
-                              ? FontWeight.bold
-                              : FontWeight.normal,
+                          fontSize: 18,
+                          color: Colors.grey[600],
                         ),
                       ),
-                      subtitle: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(notification['content']),
-                          const SizedBox(height: 4),
-                          Text(
-                            dateStr,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey[600],
-                            ),
-                          ),
-                        ],
-                      ),
-                      onTap: () => _onNotificationTap(notification),
-                    ),
-                  );
-                },
-              ),
-            ),
+                    ],
+                  ),
+                )
+              : RefreshIndicator(
+                  onRefresh: _fetchNotifications,
+                  child: ListView.builder(
+                    itemCount: _orderedGroupKeys.length * 2,
+                    itemBuilder: (context, index) {
+                      final groupIndex = index ~/ 2;
+                      final isHeader = index % 2 == 0;
+                      final groupKey = _orderedGroupKeys[groupIndex];
+                      final notifications = _groupedNotifications[groupKey]!;
+
+                      if (isHeader) {
+                        return _buildDateGroupHeader(groupKey);
+                      } else {
+                        return Column(
+                          children: notifications
+                              .map((n) => _buildNotificationCard(n))
+                              .toList(),
+                        );
+                      }
+                    },
+                  ),
+                )),
     );
   }
 }

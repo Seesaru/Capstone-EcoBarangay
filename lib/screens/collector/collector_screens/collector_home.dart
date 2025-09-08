@@ -11,6 +11,8 @@ import 'package:capstone_ecobarangay/screens/collector/features/collector_scan_h
 import 'package:capstone_ecobarangay/screens/collector/collector_screens/collector_schedule.dart';
 import 'package:capstone_ecobarangay/screens/collector/collector_screens/collector_profile.dart';
 import '../features/collector_notification_screen.dart';
+import 'package:capstone_ecobarangay/services/notification_service.dart';
+import 'dart:async';
 
 class CollectorHomeScreen extends StatefulWidget {
   const CollectorHomeScreen({super.key});
@@ -40,6 +42,7 @@ class _CollectorHomeScreenState extends State<CollectorHomeScreen> {
   int _totalScansCount = 0;
   int _totalWasteCollectedKg = 0;
   int _unreadNotificationsCount = 0;
+  StreamSubscription<QuerySnapshot>? _notifSub;
 
   // Current date formatter
   final String _currentDate =
@@ -49,6 +52,12 @@ class _CollectorHomeScreenState extends State<CollectorHomeScreen> {
   void initState() {
     super.initState();
     _fetchCollectorInfo();
+  }
+
+  @override
+  void dispose() {
+    _notifSub?.cancel();
+    super.dispose();
   }
 
   Future<void> _fetchCollectorInfo() async {
@@ -76,6 +85,7 @@ class _CollectorHomeScreenState extends State<CollectorHomeScreen> {
           _setupOneSignalTags(currentUser.uid, _collectorBarangay);
 
           // Now fetch schedules and announcements
+          _startRealtimeNotificationListener();
           await Future.wait([
             _fetchSchedules(),
             _fetchAnnouncements(),
@@ -365,8 +375,6 @@ class _CollectorHomeScreenState extends State<CollectorHomeScreen> {
 
       setState(() {
         _recentAnnouncements = limitedAnnouncements;
-        _unreadNotificationsCount =
-            announcements.length; // Using total as unread for now
       });
     } catch (e) {
       print('Error fetching announcements: ${e.toString()}');
@@ -418,13 +426,25 @@ class _CollectorHomeScreenState extends State<CollectorHomeScreen> {
                   Icons.notifications,
                   color: Colors.white,
                 ),
-                onPressed: () {
+                onPressed: () async {
+                  // Clear notification count when opening notification screen
+                  User? currentUser = _auth.currentUser;
+                  if (currentUser != null) {
+                    await NotificationService.clearNotificationCount(
+                        currentUser.uid);
+                    setState(() {
+                      _unreadNotificationsCount = 0;
+                    });
+                  }
+
                   Navigator.push(
                     context,
                     MaterialPageRoute(
                       builder: (context) => const CollectorNotificationScreen(),
                     ),
-                  );
+                  ).then((_) {
+                    if (mounted) setState(() {});
+                  });
                 },
               ),
               if (_unreadNotificationsCount > 0)
@@ -486,6 +506,42 @@ class _CollectorHomeScreenState extends State<CollectorHomeScreen> {
       ),
       body: _isLoading ? _buildLoadingState() : _buildHomeContent(context),
     );
+  }
+
+  void _startRealtimeNotificationListener() {
+    _notifSub?.cancel();
+
+    final String barangay = _collectorBarangay;
+    final String? userId = _auth.currentUser?.uid;
+    if (barangay.isEmpty || userId == null) return;
+
+    _notifSub = _firestore
+        .collection('notifications')
+        .where('isRead', isEqualTo: false)
+        .where('barangay', isEqualTo: barangay)
+        .snapshots()
+        .listen((snapshot) {
+      int count = 0;
+      for (var doc in snapshot.docs) {
+        final data = doc.data() as Map<String, dynamic>;
+        final String? targetUserId = data['targetUserId'];
+        final List<dynamic> readBy =
+            (data['readByUserIds'] as List<dynamic>?) ?? const [];
+        final bool isForThisUser =
+            targetUserId == null || targetUserId == userId;
+        final bool alreadyReadByUser = readBy.contains(userId);
+        if (isForThisUser && !alreadyReadByUser) {
+          count++;
+        }
+      }
+      if (mounted) {
+        setState(() {
+          _unreadNotificationsCount = count;
+        });
+      }
+    }, onError: (e) {
+      print('Realtime notif listener error: $e');
+    });
   }
 
   Widget _buildLoadingState() {

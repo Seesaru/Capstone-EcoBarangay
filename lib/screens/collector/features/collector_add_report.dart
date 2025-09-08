@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 // import 'package:firebase_storage/firebase_storage.dart'; // Not using Firebase Storage
 import 'dart:io';
 import 'package:uuid/uuid.dart';
@@ -28,8 +29,15 @@ class _CollectorAddReportScreenState extends State<CollectorAddReportScreen> {
   bool _isUploading = false;
   bool _isAnonymous = false;
 
+  // User data
+  String _collectorName = '';
+  String _collectorBarangay = '';
+  String _collectorAddress = '';
+  String _userId = '';
+
   // Firebase instances
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
   // final FirebaseStorage _storage = FirebaseStorage.instance; // Not using Firebase Storage
 
   // Generate unique IDs for reports and images
@@ -60,11 +68,47 @@ class _CollectorAddReportScreenState extends State<CollectorAddReportScreen> {
   ];
 
   @override
+  void initState() {
+    super.initState();
+    _fetchCollectorData();
+  }
+
+  @override
   void dispose() {
     _titleController.dispose();
     _descriptionController.dispose();
     _locationController.dispose();
     super.dispose();
+  }
+
+  Future<void> _fetchCollectorData() async {
+    try {
+      User? currentUser = _auth.currentUser;
+      if (currentUser != null) {
+        _userId = currentUser.uid;
+
+        DocumentSnapshot collectorDoc =
+            await _firestore.collection('collector').doc(currentUser.uid).get();
+
+        if (collectorDoc.exists) {
+          Map<String, dynamic> collectorData =
+              collectorDoc.data() as Map<String, dynamic>;
+          setState(() {
+            _collectorName = collectorData['fullName'] ?? 'Collector';
+            _collectorBarangay = collectorData['barangay'] ?? '';
+            // Combine purok and barangay for full address if available
+            if (collectorData['purok'] != null) {
+              _collectorAddress =
+                  '${collectorData['purok']}, ${_collectorBarangay}';
+            } else {
+              _collectorAddress = _collectorBarangay;
+            }
+          });
+        }
+      }
+    } catch (e) {
+      print('Error fetching collector data: ${e.toString()}');
+    }
   }
 
   Future<void> _pickImage() async {
@@ -189,16 +233,22 @@ class _CollectorAddReportScreenState extends State<CollectorAddReportScreen> {
           'category': _selectedCategory,
           'imageUrl': imageUrl,
           'date': Timestamp.now(),
-          'status': 'New', // Add default status
-          'author': _isAnonymous
-              ? 'Anonymous Collector'
-              : 'Collector Name', // Replace with actual user data when auth is implemented
-          'authorId': 'collector123', // Replace with actual user ID
+          'status': 'Pending Approval', // Set as pending approval
+          'approvalStatus': 'pending', // New field for approval tracking
+          'visibility': 'pending', // Will be set by admin (public/confidential)
+          'author': _isAnonymous ? 'Anonymous Collector' : _collectorName,
+          'authorId': _userId, // Always store the user ID even if anonymous
           'authorAvatar': '', // Add user avatar if available
           'authorRole': _isAnonymous ? 'Anonymous' : 'Waste Collector',
           'isAnonymous': _isAnonymous,
           'userType':
               'collector', // Add user type to distinguish collector reports
+          'residentBarangay':
+              _collectorBarangay, // Add barangay for admin filtering
+          'residentAddress': _collectorAddress, // Add address for reference
+          'submittedAt': Timestamp.now(),
+          'approvedAt': null,
+          'approvedBy': null,
         };
 
         // Save to Firestore
@@ -213,12 +263,14 @@ class _CollectorAddReportScreenState extends State<CollectorAddReportScreen> {
         // Show success message
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('Report submitted successfully!'),
+            content: const Text(
+                'Report submitted for approval! You will be notified once it\'s reviewed.'),
             backgroundColor: const Color.fromARGB(255, 3, 144, 123),
             behavior: SnackBarBehavior.floating,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(10.0),
             ),
+            duration: const Duration(seconds: 4),
           ),
         );
 
@@ -423,7 +475,7 @@ class _CollectorAddReportScreenState extends State<CollectorAddReportScreen> {
                                       borderRadius: BorderRadius.circular(16),
                                       child: Image.file(
                                         _imageFile!,
-                                        fit: BoxFit.cover,
+                                        fit: BoxFit.contain,
                                       ),
                                     ),
                                     Positioned(
@@ -604,7 +656,7 @@ class _CollectorAddReportScreenState extends State<CollectorAddReportScreen> {
                     TextFormField(
                       controller: _titleController,
                       decoration: InputDecoration(
-                        hintText: "Enter a concise title for your report",
+                        hintText: "Add title",
                         filled: true,
                         fillColor: Colors.grey[50],
                         border: OutlineInputBorder(
@@ -649,7 +701,7 @@ class _CollectorAddReportScreenState extends State<CollectorAddReportScreen> {
                     TextFormField(
                       controller: _locationController,
                       decoration: InputDecoration(
-                        hintText: "Enter the location of the issue",
+                        hintText: "Add location",
                         prefixIcon: Icon(
                           Icons.location_on_outlined,
                           color: Colors.grey[600],
@@ -746,7 +798,7 @@ class _CollectorAddReportScreenState extends State<CollectorAddReportScreen> {
                 ),
               ),
 
-              // Anonymous option
+              // Additional Info Section
               Container(
                 margin: const EdgeInsets.fromLTRB(16, 0, 16, 24),
                 padding: const EdgeInsets.all(16),
@@ -772,6 +824,32 @@ class _CollectorAddReportScreenState extends State<CollectorAddReportScreen> {
                       ),
                     ),
                     const SizedBox(height: 16),
+                    // Collector Information
+                    if (_collectorBarangay.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              "Your Barangay: $_collectorBarangay",
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: Colors.grey[700],
+                              ),
+                            ),
+                            if (_collectorAddress.isNotEmpty &&
+                                _collectorAddress != _collectorBarangay)
+                              Text(
+                                "Your Address: $_collectorAddress",
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: Colors.grey[700],
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
                     // Privacy option
                     SwitchListTile(
                       title: const Text("Make report anonymous"),

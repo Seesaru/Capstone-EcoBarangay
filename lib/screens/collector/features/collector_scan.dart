@@ -451,7 +451,6 @@ class _CollectorScanScreenState extends State<CollectorScanScreen>
 
     try {
       // Get current time
-      final now = DateTime.now();
 
       // Get weight (0 if warnings/penalties are checked)
       double weight = 0;
@@ -475,9 +474,6 @@ class _CollectorScanScreenState extends State<CollectorScanScreen>
       if (result['success']) {
         // Get the points awarded from the result
         final pointsAwarded = result['pointsAwarded'] ?? 0;
-        final previousPoints = result['previousPoints'] ?? 0;
-        final newTotalPoints = result['newTotalPoints'] ?? pointsAwarded;
-        final pointsFormula = result['pointsCalculation']?['formula'] ?? '';
 
         // Check if any warnings or penalties were applied
         bool hasWarningsOrPenalties =

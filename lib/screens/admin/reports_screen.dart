@@ -3,6 +3,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:intl/intl.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:capstone_ecobarangay/screens/admin/functions/report_approval_service.dart';
 
 // Add ReportDetailDialog class
 class ReportDetailDialog {
@@ -443,106 +444,8 @@ class ReportDetailDialog {
                   ),
                 ),
               ),
-
-              // Admin actions
-              if (isAdmin)
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.grey[100],
-                    borderRadius: const BorderRadius.only(
-                      bottomLeft: Radius.circular(16),
-                      bottomRight: Radius.circular(16),
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          onPressed: () {
-                            // Close dialog first
-                            Navigator.of(context).pop();
-
-                            // Show status update options
-                            _showStatusUpdateBottomSheet(context, report['id']);
-                          },
-                          icon: const Icon(Icons.update),
-                          label: const Text('Update Status'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF4CAF50),
-                            foregroundColor: Colors.white,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
             ],
           ),
-        ),
-      ),
-    );
-  }
-
-  // Helper method to show status update bottom sheet
-  static void _showStatusUpdateBottomSheet(
-      BuildContext context, String reportId) {
-    final _AdminReportsScreenState? adminState =
-        context.findAncestorStateOfType<_AdminReportsScreenState>();
-
-    if (adminState == null) return;
-
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (context) => Container(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.only(bottom: 16),
-              child: Text(
-                'Update Report Status',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.grey[800],
-                ),
-              ),
-            ),
-            ListTile(
-              leading:
-                  const Icon(Icons.check_circle_outline, color: Colors.green),
-              title: const Text('Mark as Resolved'),
-              onTap: () {
-                Navigator.pop(context);
-                adminState._updateReportStatus(reportId, 'Resolved');
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.pending_actions, color: Colors.orange),
-              title: const Text('Mark as In Progress'),
-              onTap: () {
-                Navigator.pop(context);
-                adminState._updateReportStatus(reportId, 'In Progress');
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.cancel_outlined, color: Colors.red),
-              title: const Text('Mark as Rejected'),
-              onTap: () {
-                Navigator.pop(context);
-                adminState._updateReportStatus(reportId, 'Rejected');
-              },
-            ),
-          ],
         ),
       ),
     );
@@ -558,6 +461,8 @@ class ReportDetailDialog {
         return Colors.green;
       case 'Rejected':
         return Colors.red;
+      case 'Confidential':
+        return Colors.blue;
       default:
         return Colors.grey;
     }
@@ -591,7 +496,6 @@ class AdminReportsScreen extends StatefulWidget {
 class _AdminReportsScreenState extends State<AdminReportsScreen> {
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
-  String _selectedSortOption = 'Latest';
   int _selectedCategoryIndex = 0;
 
   // Admin color scheme to match dashboard
@@ -609,7 +513,9 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
   String _adminBarangay = '';
   bool _isLoading = true;
   List<Map<String, dynamic>> _reports = [];
+  List<Map<String, dynamic>> _pendingReports = [];
   bool _isDisposed = false;
+  bool _showPendingOnly = false;
 
   // Category data
   final List<Map<String, dynamic>> _categoryData = [
@@ -681,6 +587,7 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
 
           // Now fetch reports for this barangay
           await _fetchReports();
+          await _fetchPendingReports();
         }
       }
     } catch (e) {
@@ -747,39 +654,20 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
     }
 
     try {
-      // Create a base query that only filters by barangay and orders by date
-      // This avoids composite index requirements
-      Query query = _firestore
-          .collection('reports')
-          .where('residentBarangay', isEqualTo: _adminBarangay)
-          .orderBy('date', descending: true);
+      List<Map<String, dynamic>> fetchedReports =
+          await ReportApprovalService.getApprovedReports(_adminBarangay);
 
-      // Execute the query
-      QuerySnapshot querySnapshot = await query.get();
+      // Apply client-side filtering
+      List<Map<String, dynamic>> filteredReports = [];
 
-      List<Map<String, dynamic>> fetchedReports = [];
-
-      // Get the current date for client-side filtering
-      DateTime now = DateTime.now();
-      DateTime startOfWeek = now.subtract(Duration(days: now.weekday - 1));
-      startOfWeek =
-          DateTime(startOfWeek.year, startOfWeek.month, startOfWeek.day);
-      DateTime startOfMonth = DateTime(now.year, now.month, 1);
-
-      for (var doc in querySnapshot.docs) {
-        Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
-
-        // Convert Timestamp to DateTime
-        DateTime reportDate = DateTime.now();
-        if (data['date'] is Timestamp) {
-          reportDate = (data['date'] as Timestamp).toDate();
-        }
+      for (var report in fetchedReports) {
+        DateTime reportDate = report['date'] as DateTime;
 
         // Client-side category filtering
         if (_selectedCategoryIndex > 0) {
           String selectedCategory =
               _categoryData[_selectedCategoryIndex]['name'];
-          if (data['category'] != selectedCategory) {
+          if (report['category'] != selectedCategory) {
             continue; // Skip this document if category doesn't match
           }
         }
@@ -791,10 +679,10 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
 
         // Client-side text search filtering
         if (_searchQuery.isNotEmpty) {
-          String title = (data['title'] ?? '').toString().toLowerCase();
-          String content = (data['content'] ?? '').toString().toLowerCase();
-          String location = (data['location'] ?? '').toString().toLowerCase();
-          String author = (data['author'] ?? '').toString().toLowerCase();
+          String title = (report['title'] ?? '').toString().toLowerCase();
+          String content = (report['content'] ?? '').toString().toLowerCase();
+          String location = (report['location'] ?? '').toString().toLowerCase();
+          String author = (report['author'] ?? '').toString().toLowerCase();
 
           if (!title.contains(_searchQuery.toLowerCase()) &&
               !content.contains(_searchQuery.toLowerCase()) &&
@@ -804,28 +692,13 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
           }
         }
 
-        // Add this report to the list
-        fetchedReports.add({
-          'id': doc.id,
-          'title': data['title'] ?? 'No Title',
-          'content': data['content'] ?? 'No content',
-          'category': data['category'] ?? 'General',
-          'location': data['location'],
-          'date': reportDate,
-          'author': data['author'],
-          'authorId': data['authorId'],
-          'authorRole': data['authorRole'] ?? 'Resident',
-          'status': data['status'] ?? 'New',
-          'userType': data['userType'],
-          'isAnonymous': data['isAnonymous'] ?? false,
-          'barangay': data['residentBarangay'] ?? _adminBarangay,
-          'imageUrl': data['imageUrl'] ?? '',
-        });
+        // Add this report to the filtered list
+        filteredReports.add(report);
       }
 
       if (!_isDisposed) {
         setState(() {
-          _reports = fetchedReports;
+          _reports = filteredReports;
           _isLoading = false;
         });
       }
@@ -849,6 +722,24 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
     }
   }
 
+  // Fetch pending reports that need approval
+  Future<void> _fetchPendingReports() async {
+    if (_adminBarangay.isEmpty) return;
+
+    try {
+      List<Map<String, dynamic>> fetchedPendingReports =
+          await ReportApprovalService.getPendingReports(_adminBarangay);
+
+      if (!_isDisposed) {
+        setState(() {
+          _pendingReports = fetchedPendingReports;
+        });
+      }
+    } catch (e) {
+      print('Error fetching pending reports: $e');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -861,7 +752,9 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
           Expanded(
             child: _isLoading
                 ? Center(child: CircularProgressIndicator(color: accentColor))
-                : _buildReportsList(),
+                : _showPendingOnly
+                    ? _buildPendingReportsList()
+                    : _buildReportsList(),
           ),
         ],
       ),
@@ -903,6 +796,33 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
             ],
           ),
           const Spacer(),
+          // Pending Reports Toggle
+          Container(
+            margin: const EdgeInsets.only(right: 12),
+            child: ElevatedButton.icon(
+              onPressed: () {
+                setState(() {
+                  _showPendingOnly = !_showPendingOnly;
+                });
+              },
+              icon: Icon(
+                _showPendingOnly ? Icons.check_circle : Icons.pending_actions,
+                size: 18,
+              ),
+              label: Text(_showPendingOnly
+                  ? 'All Reports'
+                  : 'Pending (${_pendingReports.length})'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _showPendingOnly ? Colors.orange : accentColor,
+                foregroundColor: Colors.white,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+            ),
+          ),
           // Time Period Filter
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -1228,6 +1148,55 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
     );
   }
 
+  Widget _buildPendingReportsList() {
+    if (_pendingReports.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade200,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.check_circle_outline,
+                size: 60,
+                color: Colors.grey[400],
+              ),
+            ),
+            const SizedBox(height: 24),
+            Text(
+              'No pending reports',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey[700],
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'All reports have been reviewed',
+              style: TextStyle(
+                color: Colors.grey[600],
+                fontSize: 16,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return ListView.builder(
+      padding: const EdgeInsets.all(24),
+      itemCount: _pendingReports.length,
+      itemBuilder: (context, index) {
+        return _buildPendingReportCard(_pendingReports[index]);
+      },
+    );
+  }
+
   Widget _buildReportsList() {
     // Placeholder for empty state
     if (_reports.isEmpty) {
@@ -1294,6 +1263,8 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
         return Colors.green;
       case 'Rejected':
         return Colors.red;
+      case 'Confidential':
+        return Colors.blue;
       default:
         return Colors.grey;
     }
@@ -1317,13 +1288,12 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
     return Colors.grey;
   }
 
-  Widget _buildReportCard(Map<String, dynamic> report) {
+  Widget _buildPendingReportCard(Map<String, dynamic> report) {
     final formatter = DateFormat('MMM dd, yyyy • h:mm a');
     final formattedDate = formatter.format(report['date'] as DateTime);
 
     final categoryColor = _getCategoryColor(report['category'] ?? 'All');
     final categoryIcon = _getCategoryIcon(report['category'] ?? 'All');
-    final statusColor = _getStatusColor(report['status']);
 
     return GestureDetector(
       onTap: () {
@@ -1334,27 +1304,28 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
         margin: const EdgeInsets.only(bottom: 16),
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.orange.withOpacity(0.2), width: 1),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withOpacity(0.05),
-              blurRadius: 10,
-              offset: const Offset(0, 4),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
             ),
           ],
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Colored header based on category
+            // Single header with category and pending status
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+              padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 20),
               decoration: BoxDecoration(
                 color: categoryColor,
                 borderRadius: const BorderRadius.only(
-                  topLeft: Radius.circular(16),
-                  topRight: Radius.circular(16),
+                  topLeft: Radius.circular(12),
+                  topRight: Radius.circular(12),
                 ),
               ),
               child: Row(
@@ -1362,7 +1333,7 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
                   Icon(
                     categoryIcon,
                     color: Colors.white,
-                    size: 16,
+                    size: 18,
                   ),
                   const SizedBox(width: 8),
                   Text(
@@ -1370,128 +1341,100 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
                     style: const TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.bold,
-                      fontSize: 14,
+                      fontSize: 16,
                     ),
                   ),
                   const Spacer(),
-                  // Status chip if available
-                  if (report['status'] != null)
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.3),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        report['status'],
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 10,
-                        ),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.orange,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: const Text(
+                      'PENDING',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
                       ),
                     ),
-                ],
-              ),
-            ),
-
-            // Title and date section
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Title and date
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            // Location info in badge
-                            if (report['location'] != null &&
-                                report['location'].toString().isNotEmpty)
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 8, vertical: 3),
-                                decoration: BoxDecoration(
-                                  color: Colors.grey[200],
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(
-                                      Icons.location_on,
-                                      size: 12,
-                                      color: Colors.grey[700],
-                                    ),
-                                    const SizedBox(width: 4),
-                                    Text(
-                                      report['location'].toString().length > 20
-                                          ? '${report['location'].toString().substring(0, 20)}...'
-                                          : report['location'].toString(),
-                                      style: TextStyle(
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.w500,
-                                        color: Colors.grey[700],
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            const Spacer(),
-                            // Date
-                            Text(
-                              formattedDate,
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey[600],
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-
-                        // Title
-                        Text(
-                          report['title'],
-                          style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                          ),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    formattedDate,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
                     ),
                   ),
                 ],
               ),
             ),
 
-            // Content
+            // Content section
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-              child: Text(
-                report['content'],
-                style: TextStyle(
-                  fontSize: 14,
-                  height: 1.4,
-                  color: Colors.grey[700],
-                ),
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-
-            // Author info and admin actions
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              padding: const EdgeInsets.all(20),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // Title
+                  Text(
+                    report['title'],
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      height: 1.3,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 8),
+
+                  // Location
+                  if (report['location'] != null &&
+                      report['location'].toString().isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.location_on,
+                            size: 14,
+                            color: Colors.grey[600],
+                          ),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              report['location'].toString(),
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: Colors.grey[600],
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                  // Content preview
+                  Text(
+                    report['content'],
+                    style: TextStyle(
+                      fontSize: 14,
+                      height: 1.4,
+                      color: Colors.grey[700],
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+
+                  const SizedBox(height: 12),
+
+                  // Author info (compact)
                   Row(
                     children: [
                       CircleAvatar(
@@ -1539,7 +1482,7 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
                                 ? const Color.fromARGB(255, 3, 144, 123)
                                     .withOpacity(0.1)
                                 : Colors.orange.withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(12),
+                            borderRadius: BorderRadius.circular(8),
                             border: Border.all(
                               color: report['userType'] == 'collector'
                                   ? const Color.fromARGB(255, 3, 144, 123)
@@ -1552,7 +1495,7 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
                                 ? 'Collector'
                                 : 'Resident',
                             style: TextStyle(
-                              fontSize: 10,
+                              fontSize: 11,
                               fontWeight: FontWeight.bold,
                               color: report['userType'] == 'collector'
                                   ? const Color.fromARGB(255, 3, 144, 123)
@@ -1563,34 +1506,37 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
                     ],
                   ),
 
-                  // Admin action buttons
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 16),
+
+                  // Action buttons (rectangular rounded)
                   Row(
                     children: [
-                      _buildAdminActionButton(
-                        icon: Icons.reply,
-                        label: 'Respond',
-                        onTap: () {
-                          // Show response dialog
-                          ReportDetailDialog.show(context, report,
-                              isAdmin: true);
-                        },
+                      Expanded(
+                        child: _buildActionButton(
+                          icon: Icons.visibility,
+                          label: 'Approve Public',
+                          color: Colors.green,
+                          onTap: () => _approveReport(report['id'], 'public'),
+                        ),
                       ),
                       const SizedBox(width: 8),
-                      _buildAdminActionButton(
-                        icon: Icons.check_circle_outline,
-                        label: 'Mark Resolved',
-                        onTap: () {
-                          _updateReportStatus(report['id'], 'Resolved');
-                        },
+                      Expanded(
+                        child: _buildActionButton(
+                          icon: Icons.visibility_off,
+                          label: 'Approve Confidential',
+                          color: Colors.blue,
+                          onTap: () =>
+                              _approveReport(report['id'], 'confidential'),
+                        ),
                       ),
                       const SizedBox(width: 8),
-                      _buildAdminActionButton(
-                        icon: Icons.more_horiz,
-                        label: 'More',
-                        onTap: () {
-                          _showOptionsMenu(context, report['id'], report);
-                        },
+                      Expanded(
+                        child: _buildActionButton(
+                          icon: Icons.close,
+                          label: 'Reject',
+                          color: Colors.red,
+                          onTap: () => _rejectReport(report['id']),
+                        ),
                       ),
                     ],
                   ),
@@ -1603,38 +1549,367 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
     );
   }
 
-  Widget _buildAdminActionButton({
+  Widget _buildActionButton({
     required IconData icon,
     required String label,
+    required Color color,
     required VoidCallback onTap,
   }) {
-    return Expanded(
-      child: GestureDetector(
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          decoration: BoxDecoration(
-            color: Colors.grey[100],
-            borderRadius: BorderRadius.circular(8),
-          ),
+    return ElevatedButton.icon(
+      onPressed: onTap,
+      icon: Icon(icon, size: 16),
+      label: Text(
+        label,
+        style: const TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      style: ElevatedButton.styleFrom(
+        backgroundColor: color,
+        foregroundColor: Colors.white,
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+        ),
+        elevation: 1,
+        shadowColor: color.withOpacity(0.2),
+      ),
+    );
+  }
+
+  Widget _buildDropdownButton(Map<String, dynamic> report) {
+    return PopupMenuButton<String>(
+      onSelected: (String value) {
+        switch (value) {
+          case 'respond':
+            ReportDetailDialog.show(context, report, isAdmin: true);
+            break;
+          case 'delete':
+            _showDeleteConfirmation(context, report['id']);
+            break;
+        }
+      },
+      itemBuilder: (BuildContext context) => [
+        const PopupMenuItem<String>(
+          value: 'respond',
           child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(
-                icon,
-                size: 16,
-                color: Colors.black87,
-              ),
-              const SizedBox(width: 4),
-              Text(
-                label,
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
+              Icon(Icons.reply, color: Colors.blue, size: 20),
+              SizedBox(width: 8),
+              Text('Respond'),
             ],
           ),
+        ),
+        const PopupMenuItem<String>(
+          value: 'delete',
+          child: Row(
+            children: [
+              Icon(Icons.delete_outline, color: Colors.red, size: 20),
+              SizedBox(width: 8),
+              Text('Delete Report'),
+            ],
+          ),
+        ),
+      ],
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+        decoration: BoxDecoration(
+          color: Colors.grey[600],
+          borderRadius: BorderRadius.circular(8),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.grey[600]!.withOpacity(0.2),
+              blurRadius: 1,
+              offset: const Offset(0, 1),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.more_horiz,
+              size: 16,
+              color: Colors.white,
+            ),
+            const SizedBox(width: 4),
+            Text(
+              'More',
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: Colors.white,
+              ),
+            ),
+            const SizedBox(width: 2),
+            Icon(
+              Icons.arrow_drop_down,
+              size: 16,
+              color: Colors.white,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildReportCard(Map<String, dynamic> report) {
+    final formatter = DateFormat('MMM dd, yyyy • h:mm a');
+    final formattedDate = formatter.format(report['date'] as DateTime);
+
+    final categoryColor = _getCategoryColor(report['category'] ?? 'All');
+    final categoryIcon = _getCategoryIcon(report['category'] ?? 'All');
+
+    return GestureDetector(
+      onTap: () {
+        // Show the report detail dialog when a card is tapped
+        ReportDetailDialog.show(context, report, isAdmin: true);
+      },
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.grey.withOpacity(0.2), width: 1),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Single header with category and status
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 20),
+              decoration: BoxDecoration(
+                color: categoryColor,
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(12),
+                  topRight: Radius.circular(12),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    categoryIcon,
+                    color: Colors.white,
+                    size: 18,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    report['category'] ?? 'General',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                  ),
+                  const Spacer(),
+                  // Status badge
+                  if (report['status'] != null)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: _getStatusColor(report['status']),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        report['status'],
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  const SizedBox(width: 8),
+                  Text(
+                    formattedDate,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            // Content section
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Title
+                  Text(
+                    report['title'],
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      height: 1.3,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 8),
+
+                  // Location
+                  if (report['location'] != null &&
+                      report['location'].toString().isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.location_on,
+                            size: 14,
+                            color: Colors.grey[600],
+                          ),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              report['location'].toString(),
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: Colors.grey[600],
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                  // Content preview
+                  Text(
+                    report['content'],
+                    style: TextStyle(
+                      fontSize: 14,
+                      height: 1.4,
+                      color: Colors.grey[700],
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+
+                  const SizedBox(height: 12),
+
+                  // Author info (compact)
+                  Row(
+                    children: [
+                      CircleAvatar(
+                        backgroundColor: Colors.grey[200],
+                        radius: 16,
+                        child: const Icon(
+                          Icons.person,
+                          color: Colors.grey,
+                          size: 16,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              report['author'] != null
+                                  ? report['author'].toString()
+                                  : 'Anonymous',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ),
+                            ),
+                            Text(
+                              report['authorRole'] != null
+                                  ? report['authorRole'].toString()
+                                  : 'Resident',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey[600],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      // User type badge
+                      if (report['userType'] != null)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: report['userType'] == 'collector'
+                                ? const Color.fromARGB(255, 3, 144, 123)
+                                    .withOpacity(0.1)
+                                : Colors.orange.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: report['userType'] == 'collector'
+                                  ? const Color.fromARGB(255, 3, 144, 123)
+                                      .withOpacity(0.3)
+                                  : Colors.orange.withOpacity(0.3),
+                            ),
+                          ),
+                          child: Text(
+                            report['userType'] == 'collector'
+                                ? 'Collector'
+                                : 'Resident',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              color: report['userType'] == 'collector'
+                                  ? const Color.fromARGB(255, 3, 144, 123)
+                                  : Colors.orange,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  // Action buttons (rectangular rounded)
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _buildActionButton(
+                          icon: Icons.check_circle_outline,
+                          label: 'Mark Resolved',
+                          color: Colors.green,
+                          onTap: () {
+                            _updateReportStatus(report['id'], 'Resolved');
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _buildActionButton(
+                          icon: Icons.pending_actions,
+                          label: 'Mark In Progress',
+                          color: Colors.orange,
+                          onTap: () {
+                            _updateReportStatus(report['id'], 'In Progress');
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _buildDropdownButton(report),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -1642,26 +1917,32 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
 
   // Update the status of a report in Firestore
   void _updateReportStatus(String reportId, String newStatus) async {
+    setState(() {
+      _isLoading = true;
+    });
+
     try {
-      setState(() {
-        _isLoading = true;
-      });
+      Map<String, dynamic> result =
+          await ReportApprovalService.updateReportStatus(reportId, newStatus);
 
-      // Update the report status in Firestore
-      await _firestore.collection('reports').doc(reportId).update({
-        'status': newStatus,
-        'lastUpdated': Timestamp.now(),
-      });
-
-      // Show success message
       if (!_isDisposed) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Report marked as $newStatus'),
-            backgroundColor: _getStatusColor(newStatus),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
+        if (result['success']) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(result['message']),
+              backgroundColor: _getStatusColor(newStatus),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(result['message']),
+              backgroundColor: Colors.red,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
       }
 
       // Refresh the reports list
@@ -1683,57 +1964,6 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
     }
   }
 
-  void _showOptionsMenu(
-      BuildContext context, String reportId, Map<String, dynamic> report) {
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (context) => Container(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading:
-                  const Icon(Icons.check_circle_outline, color: Colors.green),
-              title: const Text('Mark as Resolved'),
-              onTap: () {
-                Navigator.pop(context);
-                _updateReportStatus(reportId, 'Resolved');
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.pending_actions, color: Colors.orange),
-              title: const Text('Mark as In Progress'),
-              onTap: () {
-                Navigator.pop(context);
-                _updateReportStatus(reportId, 'In Progress');
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.cancel_outlined, color: Colors.red),
-              title: const Text('Mark as Rejected'),
-              onTap: () {
-                Navigator.pop(context);
-                _updateReportStatus(reportId, 'Rejected');
-              },
-            ),
-            // Add a delete option
-            ListTile(
-              leading: const Icon(Icons.delete_outline, color: Colors.grey),
-              title: const Text('Delete Report'),
-              onTap: () {
-                Navigator.pop(context);
-                _showDeleteConfirmation(context, reportId);
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 
   // Show delete confirmation dialog
   void _showDeleteConfirmation(BuildContext context, String reportId) {
@@ -1762,23 +1992,32 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
 
   // Delete a report from Firestore
   void _deleteReport(String reportId) async {
+    setState(() {
+      _isLoading = true;
+    });
+
     try {
-      setState(() {
-        _isLoading = true;
-      });
+      Map<String, dynamic> result =
+          await ReportApprovalService.deleteReport(reportId);
 
-      // Delete the report from Firestore
-      await _firestore.collection('reports').doc(reportId).delete();
-
-      // Show success message
       if (!_isDisposed) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Report deleted successfully'),
-            backgroundColor: Colors.red,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
+        if (result['success']) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(result['message']),
+              backgroundColor: Colors.red,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(result['message']),
+              backgroundColor: Colors.red,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
       }
 
       // Refresh the reports list
@@ -1792,6 +2031,109 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Error deleting report'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
+  // Approve a report with specified visibility
+  void _approveReport(String reportId, String visibility) async {
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      Map<String, dynamic> result =
+          await ReportApprovalService.approveReport(reportId, visibility);
+
+      if (!_isDisposed) {
+        if (result['success']) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(result['message']),
+              backgroundColor:
+                  result['visibility'] == 'public' ? Colors.green : Colors.blue,
+              behavior: SnackBarBehavior.floating,
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(result['message']),
+              backgroundColor: Colors.red,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+      }
+
+      // Refresh both reports lists
+      await _fetchReports();
+      await _fetchPendingReports();
+    } catch (e) {
+      print('Error in approval process: $e');
+      if (!_isDisposed) {
+        setState(() {
+          _isLoading = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Error approving report'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
+  // Reject a report
+  void _rejectReport(String reportId) async {
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      Map<String, dynamic> result =
+          await ReportApprovalService.rejectReport(reportId);
+
+      if (!_isDisposed) {
+        if (result['success']) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(result['message']),
+              backgroundColor: Colors.red,
+              behavior: SnackBarBehavior.floating,
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(result['message']),
+              backgroundColor: Colors.red,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+      }
+
+      // Refresh both reports lists
+      await _fetchReports();
+      await _fetchPendingReports();
+    } catch (e) {
+      print('Error in rejection process: $e');
+      if (!_isDisposed) {
+        setState(() {
+          _isLoading = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Error rejecting report'),
             backgroundColor: Colors.red,
             behavior: SnackBarBehavior.floating,
           ),

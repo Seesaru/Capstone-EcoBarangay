@@ -5,6 +5,7 @@ import 'package:capstone_ecobarangay/screens/others/reusable_widgets.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:capstone_ecobarangay/services/onesignal_notif.dart';
+import 'package:capstone_ecobarangay/services/notification_service.dart';
 
 class AddAnnouncementScreen extends StatefulWidget {
   final Function? onBackPressed;
@@ -205,7 +206,20 @@ class _AddAnnouncementScreenState extends State<AddAnnouncementScreen> {
         };
 
         // Add to Firestore
-        await _firestore.collection('announcements').add(announcementData);
+        DocumentReference announcementRef =
+            await _firestore.collection('announcements').add(announcementData);
+
+        // Create notification record in the notifications collection
+        await NotificationService.createAnnouncementNotification(
+          announcementId: announcementRef.id,
+          title: _titleController.text,
+          content: _contentController.text,
+          barangay: widget.adminBarangay,
+          targetPurok: _selectedPurok == 'General' ? null : _selectedPurok,
+          isUrgent: _isUrgent,
+          category: _selectedCategory,
+          priority: _selectedPriority,
+        );
 
         // Format the content for notification
         String notificationContent = _contentController.text.length > 100

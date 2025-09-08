@@ -97,17 +97,41 @@ class ScheduleNotificationService {
           print('Sending notification to barangay: $barangay');
           print('Notification content: $notificationContent');
 
-          // Send the notification to the barangay with data for better handling
-          await NotifServices.sendBarangayNotificationWithData(
-            barangay: barangay,
-            heading: 'Waste Collection Today!',
-            content: notificationContent.trim(),
-            additionalData: {
+          // Idempotency: Use a Firestore lock so only the first client sends
+          final String lockDocId = 'daily_${todayStr}_$barangay';
+          final DocumentReference lockRef =
+              _firestore.collection('notification_locks').doc(lockDocId);
+
+          await _firestore.runTransaction((txn) async {
+            final snap = await txn.get(lockRef);
+            if (snap.exists) {
+              print(
+                  'Daily notification already sent for $barangay on $todayStr');
+              return;
+            }
+
+            // Create lock
+            txn.set(lockRef, {
               'type': 'daily_schedule',
               'barangay': barangay,
               'date': todayStr,
-            },
-          );
+              'created_at': FieldValue.serverTimestamp(),
+            });
+
+            // Send the notification to the barangay with data for better handling
+            return NotifServices.sendBarangayNotificationWithData(
+              barangay: barangay,
+              heading: 'Waste Collection Today!',
+              content: notificationContent.trim(),
+              additionalData: {
+                'type': 'daily_schedule',
+                'barangay': barangay,
+                'date': todayStr,
+              },
+              // Deterministic id so OneSignal dedupes if multiple requests race
+              externalId: 'daily_${todayStr}_$barangay',
+            );
+          });
         }
 
         // Mark as notified for today
@@ -131,10 +155,13 @@ class ScheduleNotificationService {
       final prefs = await SharedPreferences.getInstance();
 
       print('Querying Firestore for today\'s schedules (upcoming check)...');
-      // Query today's schedules
+      // Query today's schedules using the same range as above for consistency
       final scheduleSnapshot = await _firestore
           .collection('schedule')
-          .where('date', isEqualTo: Timestamp.fromDate(today))
+          .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(today))
+          .where('date',
+              isLessThan:
+                  Timestamp.fromDate(today.add(const Duration(days: 1))))
           .get();
 
       print('Found ${scheduleSnapshot.docs.length} schedules to check');
@@ -175,23 +202,43 @@ class ScheduleNotificationService {
             print(
                 'Sending upcoming notification for $wasteType collection in ${timeUntilCollection.inMinutes} minutes');
 
-            await NotifServices.sendBarangayNotificationWithData(
-              barangay: barangay,
-              heading: 'Upcoming Waste Collection!',
-              content:
-                  '$wasteType waste collection in ${timeUntilCollection.inMinutes} minutes!\nTime: $timeStr\nLocation: $location',
-              additionalData: {
+            // Firestore lock to prevent duplicate upcoming notifications
+            final String lockDocId = 'upcoming_${scheduleId}';
+            final DocumentReference lockRef =
+                _firestore.collection('notification_locks').doc(lockDocId);
+
+            await _firestore.runTransaction((txn) async {
+              final snap = await txn.get(lockRef);
+              if (snap.exists) {
+                print('Upcoming notification already sent for $scheduleId');
+                return;
+              }
+
+              txn.set(lockRef, {
                 'type': 'upcoming_collection',
                 'schedule_id': scheduleId,
-                'barangay': barangay,
-                'waste_type': wasteType,
-                'location': location,
-                'time': timeStr,
-                'minutes_until': timeUntilCollection.inMinutes,
-              },
-            );
+                'created_at': FieldValue.serverTimestamp(),
+              });
 
-            // Mark this schedule as notified
+              await NotifServices.sendBarangayNotificationWithData(
+                barangay: barangay,
+                heading: 'Upcoming Waste Collection!',
+                content:
+                    '$wasteType waste collection in ${timeUntilCollection.inMinutes} minutes!\nTime: $timeStr\nLocation: $location',
+                additionalData: {
+                  'type': 'upcoming_collection',
+                  'schedule_id': scheduleId,
+                  'barangay': barangay,
+                  'waste_type': wasteType,
+                  'location': location,
+                  'time': timeStr,
+                  'minutes_until': timeUntilCollection.inMinutes,
+                },
+                externalId: 'upcoming_${scheduleId}',
+              );
+            });
+
+            // Mark this schedule as notified on this device
             await prefs.setBool(notifKey, true);
             print(
                 'Marked upcoming notification as sent for schedule $scheduleId');

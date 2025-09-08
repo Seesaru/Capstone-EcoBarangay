@@ -582,9 +582,7 @@ class _DashboardHomeScreenState extends State<DashboardHomeScreen> {
   int _totalScannedUsers = 0;
 
   // Recent items
-  List<Map<String, dynamic>> _recentAnnouncements = [];
   List<Map<String, dynamic>> _upcomingSchedules = [];
-  List<Map<String, dynamic>> _recentReports = [];
 
   // Charts data
   Map<String, double> _wasteCollectionData = {};
@@ -725,8 +723,6 @@ class _DashboardHomeScreenState extends State<DashboardHomeScreen> {
 
       // Update announcement count
       setState(() {
-        _announcementsCount = fetchedAnnouncements.length;
-        _recentAnnouncements = fetchedAnnouncements.take(5).toList();
       });
     } catch (e) {
       print('Error fetching announcements: $e');
@@ -735,8 +731,6 @@ class _DashboardHomeScreenState extends State<DashboardHomeScreen> {
 
   Future<void> _fetchSchedules() async {
     try {
-      final DateTime now = DateTime.now();
-      final DateTime today = DateTime(now.year, now.month, now.day);
 
       QuerySnapshot querySnapshot = await _firestore
           .collection('schedule')
@@ -811,14 +805,12 @@ class _DashboardHomeScreenState extends State<DashboardHomeScreen> {
       }
 
       setState(() {
-        _recentReports = fetchedReports.take(5).toList();
         _reportsCount = fetchedReports.length;
       });
     } catch (e) {
       print('Error fetching reports: $e');
       // Set fallback values if there's an error
       _reportsCount = 0;
-      _recentReports = [];
     }
   }
 

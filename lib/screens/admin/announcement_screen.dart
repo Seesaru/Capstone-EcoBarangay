@@ -38,13 +38,15 @@ class _AdminAnnouncements extends State<AdminAnnouncements> {
 
   // Time period filter (match Penalty List design)
   String _selectedTimeFilter = 'This Week';
-  String? _selectedMonth; // e.g., 'Jul 2025'
+  String? _selectedCustomDate; // e.g., 'Jul 15, 2025 - Jul 20, 2025'
+  DateTime? _customStartDate;
+  DateTime? _customEndDate;
   final List<String> _timeFilters = [
     'This Week',
     'This Month',
     'This Year',
     'All Time',
-    'Select Month',
+    'Custom',
   ];
 
   // Category data matching resident view - will be populated dynamically
@@ -389,17 +391,15 @@ class _AdminAnnouncements extends State<AdminAnnouncements> {
     final DateTime now = DateTime.now();
     final DateTime today = DateTime(now.year, now.month, now.day);
 
-    if (_selectedTimeFilter == 'Select Month' && _selectedMonth != null) {
-      try {
-        final DateTime parsed = DateFormat('MMM yyyy').parse(_selectedMonth!);
-        final DateTime start = DateTime(parsed.year, parsed.month, 1);
-        final DateTime end =
-            DateTime(parsed.year, parsed.month + 1, 0, 23, 59, 59);
-        return date.isAfter(start.subtract(const Duration(seconds: 1))) &&
-            date.isBefore(end.add(const Duration(seconds: 1)));
-      } catch (_) {
-        return true;
-      }
+    if (_selectedTimeFilter == 'Custom' &&
+        _customStartDate != null &&
+        _customEndDate != null) {
+      final DateTime start = DateTime(_customStartDate!.year,
+          _customStartDate!.month, _customStartDate!.day);
+      final DateTime end = DateTime(_customEndDate!.year, _customEndDate!.month,
+          _customEndDate!.day, 23, 59, 59);
+      return date.isAfter(start.subtract(const Duration(seconds: 1))) &&
+          date.isBefore(end.add(const Duration(seconds: 1)));
     }
 
     switch (_selectedTimeFilter) {
@@ -578,97 +578,112 @@ class _AdminAnnouncements extends State<AdminAnnouncements> {
                             }).toList(),
                             onChanged: (String? newValue) async {
                               if (newValue == null) return;
-                              if (newValue == 'Select Month') {
-                                final now = DateTime.now();
-                                DateTime? picked = await showDialog<DateTime>(
+                              if (newValue == 'Custom') {
+                                // Show custom date range picker as floating card
+                                await showDialog<DateTimeRange>(
                                   context: context,
-                                  builder: (context) {
-                                    int selectedYear = now.year;
-                                    int selectedMonth = now.month;
-                                    return StatefulBuilder(
-                                      builder: (context, setStateDialog) {
-                                        return AlertDialog(
-                                          title: const Text('Select Month'),
-                                          content: SizedBox(
-                                            height: 120,
-                                            child: Column(
-                                              children: [
-                                                DropdownButton<int>(
-                                                  value: selectedMonth,
-                                                  items: List.generate(
-                                                          12, (i) => i + 1)
-                                                      .map((month) =>
-                                                          DropdownMenuItem(
-                                                            value: month,
-                                                            child: Text(DateFormat(
-                                                                    'MMMM')
-                                                                .format(DateTime(
-                                                                    0, month))),
-                                                          ))
-                                                      .toList(),
-                                                  onChanged: (int? month) {
-                                                    if (month != null) {
-                                                      setStateDialog(() {
-                                                        selectedMonth = month;
-                                                      });
-                                                    }
-                                                  },
+                                  builder: (context) => Dialog(
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(16),
+                                    ),
+                                    child: Container(
+                                      width: 400,
+                                      padding: const EdgeInsets.all(24),
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Row(
+                                            children: [
+                                              Icon(Icons.date_range,
+                                                  color: accentColor, size: 24),
+                                              const SizedBox(width: 12),
+                                              Text(
+                                                'Select Date Range',
+                                                style: TextStyle(
+                                                  fontSize: 18,
+                                                  fontWeight: FontWeight.bold,
+                                                  color: Colors.grey.shade800,
                                                 ),
-                                                DropdownButton<int>(
-                                                  value: selectedYear,
-                                                  items: List.generate(
-                                                          10,
-                                                          (i) =>
-                                                              now.year - 5 + i)
-                                                      .map((year) =>
-                                                          DropdownMenuItem(
-                                                            value: year,
-                                                            child: Text(year
-                                                                .toString()),
-                                                          ))
-                                                      .toList(),
-                                                  onChanged: (int? year) {
-                                                    if (year != null) {
-                                                      setStateDialog(() {
-                                                        selectedYear = year;
-                                                      });
-                                                    }
-                                                  },
-                                                ),
-                                              ],
+                                              ),
+                                              const Spacer(),
+                                              IconButton(
+                                                icon: const Icon(Icons.close),
+                                                onPressed: () =>
+                                                    Navigator.of(context).pop(),
+                                              ),
+                                            ],
+                                          ),
+                                          const SizedBox(height: 20),
+                                          SizedBox(
+                                            height: 300,
+                                            child: CalendarDatePicker(
+                                              initialDate: _customStartDate ??
+                                                  DateTime.now(),
+                                              firstDate: DateTime.now()
+                                                  .subtract(const Duration(
+                                                      days: 365)),
+                                              lastDate: DateTime.now().add(
+                                                  const Duration(days: 365)),
+                                              onDateChanged: (date) {
+                                                // For simplicity, we'll use a single date picker
+                                                // You can enhance this to select a range
+                                                setState(() {
+                                                  _selectedTimeFilter =
+                                                      'Custom';
+                                                  _customStartDate = date;
+                                                  _customEndDate = date;
+                                                  _selectedCustomDate =
+                                                      DateFormat('MMM dd, yyyy')
+                                                          .format(date);
+                                                });
+                                                Navigator.of(context).pop();
+                                              },
                                             ),
                                           ),
-                                          actions: [
-                                            TextButton(
-                                              onPressed: () =>
-                                                  Navigator.of(context).pop(),
-                                              child: const Text('Cancel'),
-                                            ),
-                                            TextButton(
-                                              onPressed: () {
-                                                Navigator.of(context).pop(
-                                                    DateTime(selectedYear,
-                                                        selectedMonth));
-                                              },
-                                              child: const Text('OK'),
-                                            ),
-                                          ],
-                                        );
-                                      },
-                                    );
-                                  },
+                                          const SizedBox(height: 16),
+                                          Row(
+                                            children: [
+                                              Expanded(
+                                                child: TextButton(
+                                                  onPressed: () =>
+                                                      Navigator.of(context)
+                                                          .pop(),
+                                                  child: const Text('Cancel'),
+                                                ),
+                                              ),
+                                              const SizedBox(width: 12),
+                                              Expanded(
+                                                child: ElevatedButton(
+                                                  onPressed: () {
+                                                    if (_customStartDate !=
+                                                        null) {
+                                                      Navigator.of(context)
+                                                          .pop();
+                                                    }
+                                                  },
+                                                  style:
+                                                      ElevatedButton.styleFrom(
+                                                    backgroundColor:
+                                                        accentColor,
+                                                    foregroundColor:
+                                                        Colors.white,
+                                                  ),
+                                                  child: const Text('Apply'),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
                                 );
-                                if (picked != null) {
-                                  setState(() {
-                                    _selectedTimeFilter = 'Select Month';
-                                    _selectedMonth =
-                                        DateFormat('MMM yyyy').format(picked);
-                                  });
-                                }
                               } else {
                                 setState(() {
                                   _selectedTimeFilter = newValue;
-                                  _selectedMonth = null;
+                                  _selectedCustomDate = null;
+                                  _customStartDate = null;
+                                  _customEndDate = null;
                                 });
                               }
                             },
@@ -678,8 +693,8 @@ class _AdminAnnouncements extends State<AdminAnnouncements> {
                             dropdownColor: Colors.white,
                             isDense: true,
                           ),
-                          if (_selectedTimeFilter == 'Select Month' &&
-                              _selectedMonth != null) ...[
+                          if (_selectedTimeFilter == 'Custom' &&
+                              _selectedCustomDate != null) ...[
                             const SizedBox(width: 8),
                             Container(
                               padding: const EdgeInsets.symmetric(
@@ -692,11 +707,11 @@ class _AdminAnnouncements extends State<AdminAnnouncements> {
                               child: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  const Icon(Icons.calendar_month,
+                                  const Icon(Icons.date_range,
                                       color: Color(0xFF4CAF50), size: 18),
                                   const SizedBox(width: 6),
                                   Text(
-                                    _selectedMonth!,
+                                    _selectedCustomDate!,
                                     style: const TextStyle(
                                       fontSize: 14,
                                       fontWeight: FontWeight.w500,
@@ -892,9 +907,9 @@ class _AdminAnnouncements extends State<AdminAnnouncements> {
                 ),
                 const SizedBox(width: 16),
                 _buildStatCardCompact(
-                  title: _selectedTimeFilter == 'Select Month' &&
-                          _selectedMonth != null
-                      ? _selectedMonth!
+                  title: _selectedTimeFilter == 'Custom' &&
+                          _selectedCustomDate != null
+                      ? 'Custom Range'
                       : _selectedTimeFilter,
                   value: _announcements
                       .where(
@@ -1409,7 +1424,9 @@ class _AdminAnnouncements extends State<AdminAnnouncements> {
                 _searchController.clear();
                 _searchQuery = '';
                 _selectedTimeFilter = 'This Week';
-                _selectedMonth = null;
+                _selectedCustomDate = null;
+                _customStartDate = null;
+                _customEndDate = null;
               });
             },
             icon: const Icon(Icons.refresh, size: 16),

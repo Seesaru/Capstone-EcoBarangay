@@ -225,7 +225,6 @@ class CustomBackButton extends StatelessWidget {
 /// Shows a confirmation dialog when logging out
 /// Returns true if user confirms logout, false otherwise
 Future<bool> showLogoutConfirmationDialog(BuildContext context) async {
-  final Color primaryColor = Theme.of(context).primaryColor;
   final Color accentColor =
       const Color(0xFF4CAF50); // Green accent from admin theme
 

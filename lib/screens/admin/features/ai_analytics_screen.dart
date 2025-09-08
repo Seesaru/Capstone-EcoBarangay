@@ -40,6 +40,9 @@ class _AIAnalyticsScreenState extends State<AIAnalyticsScreen> {
 
     try {
       print('Starting AI analysis for barangay: ${widget.adminBarangay}');
+      final cacheStatus = _aiService.getCacheStatus();
+      print('Cache status before analysis: $cacheStatus');
+
       final result = await _aiService.generateAIAnalysis();
       print('AI analysis result: $result');
 
@@ -49,7 +52,8 @@ class _AIAnalyticsScreenState extends State<AIAnalyticsScreen> {
           _errorMessage = result['error'] ?? 'Analysis failed';
           print('AI analysis failed: $_errorMessage');
         } else {
-          print('AI analysis completed successfully');
+          final isCached = result['cached'] as bool? ?? false;
+          print('AI analysis completed successfully (cached: $isCached)');
           print('Recommendations: ${_aiService.aiRecommendations}');
           print('Predictions: ${_aiService.aiPredictions}');
           print('Insights: ${_aiService.aiInsights}');
@@ -73,6 +77,39 @@ class _AIAnalyticsScreenState extends State<AIAnalyticsScreen> {
     }
   }
 
+  Future<void> _forceRefreshAnalysis() async {
+    setState(() {
+      _isAnalyzing = true;
+      _errorMessage = null;
+    });
+
+    try {
+      print(
+          'Force refreshing AI analysis for barangay: ${widget.adminBarangay}');
+      print('Clearing cache and generating fresh analysis...');
+
+      final result = await _aiService.forceRefreshAnalysis();
+      print('Force refresh result: $result');
+
+      setState(() {
+        _isAnalyzing = false;
+        if (result['success'] != true) {
+          _errorMessage = result['error'] ?? 'Analysis failed';
+          print('Force refresh failed: $_errorMessage');
+        } else {
+          print(
+              'Force refresh completed successfully - new analysis generated');
+        }
+      });
+    } catch (e) {
+      print('Error in force refresh: $e');
+      setState(() {
+        _isAnalyzing = false;
+        _errorMessage = e.toString();
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -81,12 +118,6 @@ class _AIAnalyticsScreenState extends State<AIAnalyticsScreen> {
         title:
             const Text('AI Analytics', style: TextStyle(color: Colors.white)),
         backgroundColor: primaryColor,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh, color: Colors.white),
-            onPressed: _isAnalyzing ? null : _generateAIAnalysis,
-          ),
-        ],
       ),
       body: Column(
         children: [
@@ -99,6 +130,11 @@ class _AIAnalyticsScreenState extends State<AIAnalyticsScreen> {
   }
 
   Widget _buildHeader() {
+    final cacheStatus = _aiService.getCacheStatus();
+    final hasCache = cacheStatus['hasCache'] as bool? ?? false;
+    final cacheAge = cacheStatus['cacheAge'] as String? ?? '';
+    final isUsingCache = hasCache && !_isAnalyzing && _errorMessage == null;
+
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -172,16 +208,71 @@ class _AIAnalyticsScreenState extends State<AIAnalyticsScreen> {
           ] else ...[
             Row(
               children: [
-                const Icon(Icons.check_circle, color: Colors.white, size: 20),
+                Icon(
+                  isUsingCache ? Icons.cached : Icons.check_circle,
+                  color: Colors.white,
+                  size: 20,
+                ),
                 const SizedBox(width: 12),
-                Text(
-                  'Analysis complete - ${DateFormat('MMM d, yyyy').format(DateTime.now())}',
-                  style: TextStyle(
-                      color: Colors.white.withOpacity(0.9), fontSize: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        isUsingCache
+                            ? 'Using cached analysis'
+                            : 'Analysis complete',
+                        style: TextStyle(
+                            color: Colors.white.withOpacity(0.9), fontSize: 14),
+                      ),
+                      if (isUsingCache && cacheAge.isNotEmpty)
+                        Text(
+                          'Last updated: $cacheAge',
+                          style: TextStyle(
+                              color: Colors.white.withOpacity(0.7),
+                              fontSize: 12),
+                        ),
+                    ],
+                  ),
                 ),
               ],
             ),
           ],
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _isAnalyzing ? null : _generateAIAnalysis,
+                  icon:
+                      const Icon(Icons.refresh, color: Colors.white, size: 16),
+                  label: Text(
+                    'Refresh',
+                    style: TextStyle(color: Colors.white, fontSize: 12),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    side: BorderSide(color: Colors.white.withOpacity(0.3)),
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _isAnalyzing ? null : _forceRefreshAnalysis,
+                  icon: const Icon(Icons.sync, color: Colors.white, size: 16),
+                  label: Text(
+                    'Force Refresh',
+                    style: TextStyle(color: Colors.white, fontSize: 12),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    side: BorderSide(color: Colors.white.withOpacity(0.3)),
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );
@@ -290,6 +381,9 @@ class _AIAnalyticsScreenState extends State<AIAnalyticsScreen> {
     print('Raw AI recommendations: ${_aiService.aiRecommendations}');
 
     if (recommendations.isEmpty) {
+      final cacheStatus = _aiService.getCacheStatus();
+      final hasCache = cacheStatus['hasCache'] as bool? ?? false;
+
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -300,15 +394,28 @@ class _AIAnalyticsScreenState extends State<AIAnalyticsScreen> {
             const Text('No recommendations available'),
             const SizedBox(height: 8),
             Text(
-              'AI analysis may still be processing or there was an issue with the response.',
+              hasCache
+                  ? 'Cached analysis is available but recommendations could not be parsed.'
+                  : 'AI analysis may still be processing or there was an issue with the response.',
               style: TextStyle(color: Colors.grey[600], fontSize: 12),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 16),
-            ElevatedButton.icon(
-              onPressed: _generateAIAnalysis,
-              icon: const Icon(Icons.refresh),
-              label: const Text('Retry Analysis'),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                ElevatedButton.icon(
+                  onPressed: _generateAIAnalysis,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Retry Analysis'),
+                ),
+                const SizedBox(width: 12),
+                ElevatedButton.icon(
+                  onPressed: _forceRefreshAnalysis,
+                  icon: const Icon(Icons.sync),
+                  label: const Text('Force Refresh'),
+                ),
+              ],
             ),
           ],
         ),

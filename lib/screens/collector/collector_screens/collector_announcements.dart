@@ -32,8 +32,14 @@ class _CollectorAnnouncementsScreenState
   List<Map<String, dynamic>> _announcements = [];
 
   // Time filter options
-  final List<String> _timeFilters = ['All Time', 'This Week', 'This Month'];
+  final List<String> _timeFilters = [
+    'All Time',
+    'This Week',
+    'This Month',
+    'Custom'
+  ];
   String _selectedTimeFilter = 'This Week'; // Default filter is 'This Week'
+  DateTime? _customDate; // Selected custom date
 
   // Maps for icons and colors based on category
   final Map<String, IconData> _categoryIcons = {
@@ -332,23 +338,35 @@ class _CollectorAnnouncementsScreenState
 
       switch (_selectedTimeFilter) {
         case 'This Week':
-          // Go back to the most recent Sunday (or 7 days if you prefer)
           cutoffDate = now.subtract(Duration(days: now.weekday % 7));
           cutoffDate =
               DateTime(cutoffDate.year, cutoffDate.month, cutoffDate.day);
+          filtered = filtered.where((announcement) {
+            final d = announcement['date'] as DateTime;
+            return d.isAfter(cutoffDate) || d.isAtSameMomentAs(cutoffDate);
+          }).toList();
           break;
         case 'This Month':
           cutoffDate = DateTime(now.year, now.month, 1);
+          filtered = filtered.where((announcement) {
+            final d = announcement['date'] as DateTime;
+            return d.isAfter(cutoffDate) || d.isAtSameMomentAs(cutoffDate);
+          }).toList();
+          break;
+        case 'Custom':
+          if (_customDate != null) {
+            final start = DateTime(
+                _customDate!.year, _customDate!.month, _customDate!.day);
+            final end = start.add(const Duration(days: 1));
+            filtered = filtered.where((announcement) {
+              final d = announcement['date'] as DateTime;
+              return !d.isBefore(start) && d.isBefore(end);
+            }).toList();
+          }
           break;
         default:
-          cutoffDate = DateTime(1900); // Very old date to include everything
+          break;
       }
-
-      filtered = filtered
-          .where((announcement) =>
-              (announcement['date'] as DateTime).isAfter(cutoffDate) ||
-              (announcement['date'] as DateTime).isAtSameMomentAs(cutoffDate))
-          .toList();
     }
 
     // Apply category filter
@@ -604,7 +622,11 @@ class _CollectorAnnouncementsScreenState
                 padding: const EdgeInsets.only(right: 8),
                 child: FilterChip(
                   label: Text(
-                    filter,
+                    filter == 'Custom' && _customDate != null
+                        ? 'Custom (' +
+                            DateFormat('MMM d, yyyy').format(_customDate!) +
+                            ')'
+                        : filter,
                     style: TextStyle(
                       fontSize: 12,
                       fontWeight: _selectedTimeFilter == filter
@@ -622,7 +644,11 @@ class _CollectorAnnouncementsScreenState
                   padding:
                       const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
                   visualDensity: VisualDensity.compact,
-                  onSelected: (selected) {
+                  onSelected: (selected) async {
+                    if (filter == 'Custom') {
+                      await _pickCustomDate();
+                      return;
+                    }
                     if (selected) {
                       setState(() {
                         _selectedTimeFilter = filter;
@@ -635,6 +661,41 @@ class _CollectorAnnouncementsScreenState
         ),
       ),
     );
+  }
+
+  Future<void> _pickCustomDate() async {
+    final DateTime now = DateTime.now();
+    final DateTime initial =
+        _customDate ?? DateTime(now.year, now.month, now.day);
+    final DateTime? picked = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(now.year, now.month, now.day),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: const ColorScheme.light(
+              primary: Color.fromARGB(255, 3, 144, 123),
+              onPrimary: Colors.white,
+              onSurface: Colors.black,
+            ),
+            textButtonTheme: TextButtonThemeData(
+              style: TextButton.styleFrom(
+                foregroundColor: const Color.fromARGB(255, 3, 144, 123),
+              ),
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+    if (picked != null) {
+      setState(() {
+        _customDate = DateTime(picked.year, picked.month, picked.day);
+        _selectedTimeFilter = 'Custom';
+      });
+    }
   }
 
   Widget _buildBody() {
@@ -732,8 +793,8 @@ class _CollectorAnnouncementsScreenState
                 _tabController.animateTo(0);
                 _searchController.clear();
                 _searchQuery = '';
-                _selectedTimeFilter =
-                    'This Week'; // Reset to default time filter
+                _selectedTimeFilter = 'This Week';
+                _customDate = null;
               });
             },
             icon: const Icon(Icons.refresh, size: 16),

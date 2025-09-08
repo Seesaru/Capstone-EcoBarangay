@@ -200,6 +200,11 @@ class NotifServices {
     print(
         "Scheduling notification for barangay: $barangay at ${scheduledTime.toIso8601String()}");
 
+    // Ensure deterministic id to avoid duplicates across multiple callers
+    final String externalId = "schedule_${scheduleId}_day_before";
+    // OneSignal expects an absolute time; pass UTC to avoid local timezone drift
+    final String sendAfterUtc = scheduledTime.toUtc().toIso8601String();
+
     final Map<String, dynamic> notificationData = {
       "app_id": _appId,
       "filters": [
@@ -212,8 +217,10 @@ class NotifServices {
       ],
       "headings": {"en": heading},
       "contents": {"en": content},
-      "send_after":
-          scheduledTime.toIso8601String(), // Schedule the notification
+      // Schedule the notification in UTC to prevent timezone-related delays
+      "send_after": sendAfterUtc,
+      // Idempotency key to prevent duplicate scheduled notifications
+      "external_id": externalId,
       "data": {
         "schedule_id": scheduleId,
         "barangay": barangay,
@@ -258,6 +265,7 @@ class NotifServices {
     required String heading,
     required String content,
     Map<String, dynamic>? additionalData,
+    String? externalId,
     String? bigPicture,
   }) async {
     print("Sending notification with data to barangay: $barangay");
@@ -276,6 +284,10 @@ class NotifServices {
       "contents": {"en": content},
       "data": additionalData ?? {},
     };
+
+    if (externalId != null && externalId.isNotEmpty) {
+      notificationData["external_id"] = externalId;
+    }
 
     if (bigPicture != null) {
       notificationData["big_picture"] = bigPicture;
